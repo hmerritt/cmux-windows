@@ -8,7 +8,7 @@ import {createDocumentPanes} from './document-panes.mjs';
 import {createDiffPanes} from './diff-panes.mjs';
 const diffPanes=createDiffPanes();
 const documentPanes=createDocumentPanes({openMarkdown:(root,filePath)=>openMarkdownDocument(root,filePath)});
-const workspaceFileExplorer=createWorkspaceFileExplorer({openMarkdown:(root,filePath)=>openMarkdownDocument(root,filePath),prompt:options=>showTextDialog(options),beforeRename:(root,oldPath,newPath)=>moveWorkspaceFileDrafts(root,oldPath,newPath,{validateOnly:true}),onRename:(root,oldPath,newPath)=>renameWorkspaceDocumentReferences(root,oldPath,newPath)});
+const workspaceFileExplorer=createWorkspaceFileExplorer({showMenu:showWorkspaceFileContextMenu,openMarkdown:(root,filePath)=>openMarkdownDocument(root,filePath),prompt:options=>showTextDialog(options),beforeRename:(root,oldPath,newPath)=>moveWorkspaceFileDrafts(root,oldPath,newPath,{validateOnly:true}),onRename:(root,oldPath,newPath)=>renameWorkspaceDocumentReferences(root,oldPath,newPath)});
 const workspaceSearch=createWorkspaceSearch();
 import {PaneTabGroups, replaceTreePanel} from "./pane-tab-groups.js";
 const paneTabGroups = new PaneTabGroups(localStorage);
@@ -38091,8 +38091,39 @@ function ensureContextMenu() {
 function hideContextMenu() {
   if (!state.contextMenu) return;
   state.contextMenu.hidden = true;
+  state.contextMenu.onkeydown = null;
+  state.contextMenu.removeAttribute("role");
   state.contextMenu.scrollTop = 0;
   state.contextMenu.replaceChildren();
+}
+
+function showWorkspaceFileContextMenu(event, actions, origin) {
+  const menu = ensureContextMenu();
+  menu.className = "context-menu";
+  menu.setAttribute("role", "menu");
+  const buttons = actions.map(action => {
+    const button = contextMenuButton(action.label, action.run);
+    button.dataset.fileMenu = action.id;
+    button.setAttribute("role", "menuitem");
+    return button;
+  });
+  menu.replaceChildren(...buttons);
+  menu.onkeydown = key => {
+    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(key.key)) {
+      key.preventDefault();key.stopPropagation();
+      const index = buttons.indexOf(document.activeElement);
+      const next = key.key === "Home" ? 0 : key.key === "End" ? buttons.length - 1
+        : (index + (key.key === "ArrowUp" ? -1 : 1) + buttons.length) % buttons.length;
+      buttons[next]?.focus();
+    } else if (key.key === "Enter" || key.key === " ") {
+      key.preventDefault();key.stopPropagation();document.activeElement?.click();
+    } else if (key.key === "Escape" || key.key === "Tab") {
+      key.preventDefault();key.stopPropagation();hideContextMenu();origin?.focus();
+    }
+  };
+  const rect = origin.getBoundingClientRect();
+  showContextMenuAt(menu, event.clientX || rect.left, event.clientY || rect.bottom);
+  buttons[0]?.focus();
 }
 
 function contextPaneSummary(panel, workspace) {

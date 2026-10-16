@@ -7,7 +7,7 @@ const path = require("node:path");
 const readline = require("node:readline");
 const { formatMessage, t } = require("./i18n.cjs");
 const {ShortcutConfig} = require('./shortcut-config.cjs');
-const workspaceFiles=new (require('./workspace-files.cjs').WorkspaceFiles)();
+const workspaceFiles=new (require('./workspace-files.cjs').WorkspaceFiles)({trash:target=>shell.trashItem(target)});
 const workspaceGit=new (require('./workspace-git.cjs').WorkspaceGit)();
 const workspaceSearch=new (require('./workspace-search.cjs').WorkspaceSearch)();
 const workspaceSearchRequests=new Map();
@@ -724,6 +724,12 @@ if (!hasLock) {
   },null));
   ipcMain.handle('files:rename',trustedIpcHandler(async(_event,root,relative,name)=>{
     try{return {ok:true,...await workspaceFiles.rename(root,relative,name)};}catch(error){return {ok:false,error:error.message};}
+  },null));
+  ipcMain.handle('files:duplicate',trustedIpcHandler(async(_event,root,relative,format)=>{
+    try{return {ok:true,...await workspaceFiles.duplicate(root,relative,format)};}catch(error){return {ok:false,error:error.message};}
+  },null));
+  ipcMain.handle('files:trash',trustedIpcHandler(async(_event,root,relative)=>{
+    try{return {ok:true,...await workspaceFiles.trash(root,relative)};}catch(error){return {ok:false,error:error.message};}
   },null));
   ipcMain.handle('files:image',trustedIpcHandler(async(_event,root,relative)=>{
     try{return {ok:true,...await workspaceFiles.readImage(root,relative)};}catch(error){return {ok:false,error:error.message};}

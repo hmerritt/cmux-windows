@@ -81,7 +81,7 @@ app.once('browser-window-created',(_event,win)=>win.webContents.once('did-finish
     assert.equal(fs.readFileSync(path.join(root,'journal copy','recovered.md'),'utf8'),'# Unsaved draft\nAdded after folder rename\n');
     await key('F10',['shift']);
     await waitFor("!!document.querySelector('[data-file-menu=trash]')");
-    await evaluate("document.querySelector('[data-file-menu=trash]').click()");
+    await key('End');assert.equal(await evaluate("document.activeElement.dataset.fileMenu"),'trash');await key('Enter');
     await waitFor("!document.querySelector('[data-file-path=\"journal copy\"]')");
     assert(!fs.existsSync(path.join(root,'journal copy')));
     assert(fs.existsSync(path.join(root,'journal','recovered.md')));
@@ -92,8 +92,13 @@ app.once('browser-window-created',(_event,win)=>win.webContents.once('did-finish
     await evaluate("document.querySelector('[data-file-mutation=trash]').click()");
     await waitFor("!document.querySelector('[data-file-path=\"journal copy\"]')");
     assert(!fs.existsSync(path.join(root,'journal copy')));
-    console.log('PASS file mutations: creation, shared editing, case-only rename, collision preservation, draft migration and open-document folder rename/restoration');
-  }catch(error){failed=true;console.error(error.stack||error);console.error(await evaluate("JSON.stringify({status:document.querySelector('.document-pane [role=status]')?.textContent,editor:document.querySelector('.document-pane textarea')?.outerHTML,error:document.querySelector('.document-error')?.textContent})"));}
+    const outside=path.join(profile,'outside');fs.mkdirSync(outside);fs.writeFileSync(path.join(outside,'keep.txt'),'outside retained');
+    fs.symlinkSync(outside,path.join(root,'outside-link'),'junction');
+    const trashLink=await evaluate(`window.cmuxNative.trashWorkspaceEntry(${JSON.stringify(root)},'outside-link')`);
+    assert(trashLink.ok,'Actual Recycle Bin operation must accept a junction entry');
+    assert(!fs.existsSync(path.join(root,'outside-link')));assert.equal(fs.readFileSync(path.join(outside,'keep.txt'),'utf8'),'outside retained');
+    console.log('PASS file mutations: creation, shared editing, rename and draft migration, folder duplicate, toolbar/context actions, keyboard menu and real Recycle Bin including junction isolation');
+  }catch(error){failed=true;console.error(error.stack||error);console.error(await evaluate("JSON.stringify({active:document.activeElement?.outerHTML,menu:document.querySelector('.context-menu')?.outerHTML,mutation:document.querySelector('.workspace-file-mutation-status')?.textContent,status:document.querySelector('.document-pane [role=status]')?.textContent,editor:document.querySelector('.document-pane textarea')?.outerHTML,error:document.querySelector('.document-error')?.textContent})"));}
   finally{clearTimeout(deadline);win.destroy();app.quit();}
 }));
 app.on('will-quit',event=>{if(failed){event.preventDefault();app.exit(1);}});

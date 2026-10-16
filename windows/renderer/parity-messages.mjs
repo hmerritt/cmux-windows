@@ -76,3 +76,16 @@ const diffLabels={
   ja:['Markdown ペイン','Git 差分','ファイルを検索','変更されたファイル','ステージ済みの変更','作業中の変更','変更はありません。','この Git リポジトリを読み取れません。','バイナリファイルの変更。','この差分は表示上限の 4 MB を超えています。']
 };
 for(const [locale,values] of Object.entries(diffLabels))for(const [index,key] of ['markdownPane','diffPane','searchFiles','changedFiles','stagedChanges','workingChanges','noChanges','gitError','binaryDiff','diffLimit'].entries())messages[locale][key]=values[index];
+
+const removalLabels={
+  en:['Duplicate','Move to Recycle Bin','%@ copy'],
+  de:['Duplizieren','In den Papierkorb verschieben','%@ Kopie'],
+  fr:['Dupliquer','Déplacer vers la corbeille','%@ copie'],
+  es:['Duplicar','Mover a la papelera de reciclaje','%@ copia'],
+  ar:['تكرار','نقل إلى سلة المحذوفات','%@ نسخة'],
+  'zh-Hans':['创建副本','移到回收站','%@ 副本'],
+  'zh-Hant':['製作副本','移至資源回收筒','%@ 副本'],
+  ko:['복제','휴지통으로 이동','%@ 복사본'],
+  ja:['複製','ごみ箱に移動','%@ のコピー']
+};
+for(const [locale,values] of Object.entries(removalLabels))for(const [index,key] of ['duplicateEntry','trashEntry','duplicateName'].entries())messages[locale][key]=values[index];

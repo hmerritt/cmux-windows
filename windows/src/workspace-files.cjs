@@ -6,7 +6,7 @@ const {promisify}=require('node:util');
 const run=promisify(execFile);
 const revision=data=>crypto.createHash('sha256').update(data).digest('hex');
 class WorkspaceFiles {
-  constructor(){this.pending=Promise.resolve();}
+  constructor({trash}={}){this.pending=Promise.resolve();this.trashItem=trash;}
   mutate(operation){const pending=this.pending.catch(()=>{}).then(operation);this.pending=pending;return pending;}
   validateName(name) {
     if(typeof name!=='string' || !name || name.length>255 || name==='.' || name==='..' || /[<>:"/\\|?*\x00-\x1f]/.test(name) || /[. ]$/.test(name) || /^(?:con|prn|aux|nul|clock\$|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/iu.test(name))throw Error('invalid_name');
@@ -23,14 +23,10 @@ class WorkspaceFiles {
   }
   async rename(root,relative,name) {
     this.validateName(name);
-    if(typeof relative!=='string' || !relative || path.isAbsolute(relative))throw Error('outside_root');
     return this.mutate(async()=>{
-      // Resolve only the parent: renaming a link moves the link itself.
-      const base=await fs.realpath(root),lexical=path.resolve(base,relative),within=path.relative(base,lexical);
-      if(!within || within==='..' || within.startsWith(`..${path.sep}`) || path.isAbsolute(within))throw Error('outside_root');
-      const parent=await this.resolve(base,path.dirname(within)),source=path.join(parent.target,path.basename(within)),target=path.join(parent.target,name);
+      const parent=await this.entryLocation(root,relative),source=parent.target,target=path.join(path.dirname(source),name);
       await fs.lstat(source);
-      if(source===target)return {path:path.join(parent.relative,name)};
+      if(source===target)return {path:path.join(path.dirname(parent.relative),name)};
       if(process.platform!=='win32')throw Error('unsupported_platform');
       // File.Move/Directory.Move use Windows' no-replace move. fs.rename would
       // overwrite an existing file. Environment values remain data, never code.
@@ -41,7 +37,57 @@ class WorkspaceFiles {
         if(source.toLowerCase()!==target.toLowerCase())try{await fs.lstat(target);throw Error('entry_exists');}catch(error){if(error.message==='entry_exists')throw error;}
         throw Error('mutation_failed');
       }
-      return {path:path.join(parent.relative,name)};
+      return {path:path.join(path.dirname(parent.relative),name)};
+    });
+  }
+  async entryLocation(root,relative) {
+    if(typeof relative!=='string' || !relative || path.isAbsolute(relative))throw Error('outside_root');
+    const base=await fs.realpath(root),lexical=path.resolve(base,relative),within=path.relative(base,lexical);
+    if(!within || within==='..' || within.startsWith(`..${path.sep}`) || path.isAbsolute(within))throw Error('outside_root');
+    // Resolve the parent, leaving the final link intact for copy/move/trash.
+    const parent=await this.resolve(base,path.dirname(within));
+    return {target:path.join(parent.target,path.basename(within)),relative:path.join(parent.relative,path.basename(within))};
+  }
+  async duplicate(root,relative,format='%@ copy') {
+    if(typeof format!=='string' || format.length>255 || format.split('%@').length!==2)throw Error('invalid_name');
+    return this.mutate(async()=>{
+      const location=await this.entryLocation(root,relative),stat=await fs.lstat(location.target),name=path.basename(location.target);
+      const extension=stat.isDirectory()?'':path.extname(name),stem=extension?name.slice(0,-extension.length):name;
+      for(let index=1;index<=10000;index++) {
+        const candidate=this.validateName(format.replace('%@',stem)+(index===1?'':` ${index}`)+extension);
+        const target=path.join(path.dirname(location.target),candidate);
+        try {await fs.lstat(target);continue;}catch(error){if(error.code!=='ENOENT')throw error;}
+        let claimed=false;
+        try {
+          await this.copyEntry(location.target,target,()=>{claimed=true;});
+          return {path:path.join(path.dirname(location.relative),candidate)};
+        }catch(error){
+          if(claimed)await fs.rm(target,{recursive:true,force:true});
+          if(!claimed && error.code==='EEXIST')continue;
+          throw error;
+        }
+      }
+      throw Error('entry_exists');
+    });
+  }
+  async copyEntry(source,target,claim=()=>{}) {
+    const stat=await fs.lstat(source);
+    if(stat.isSymbolicLink()) {
+      const link=await fs.readlink(source);
+      const directory=await fs.stat(source).then(value=>value.isDirectory(),()=>false);
+      await fs.symlink(link,target,directory?'junction':'file');claim();
+    }else if(stat.isDirectory()) {
+      await fs.mkdir(target);claim();
+      for(const name of await fs.readdir(source))await this.copyEntry(path.join(source,name),path.join(target,name));
+    }else if(stat.isFile()) {await fs.copyFile(source,target,require('node:fs').constants.COPYFILE_EXCL);claim();}
+    else throw Error('unsupported_file');
+  }
+  async trash(root,relative) {
+    return this.mutate(async()=>{
+      const location=await this.entryLocation(root,relative);await fs.lstat(location.target);
+      if(!this.trashItem)throw Error('trash_unavailable');
+      await this.trashItem(location.target);
+      return {path:location.relative};
     });
   }
   async resolve(root,relative='') {

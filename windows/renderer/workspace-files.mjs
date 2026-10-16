@@ -3,17 +3,17 @@ import {parityText} from './parity-messages.mjs';
 import {catalog} from './shortcut-engine.mjs';
 import {actionLabel} from './shortcut-ui.mjs';
 
-export function createWorkspaceFileExplorer({openMarkdown,prompt,onRename,beforeRename}={}) {
+export function createWorkspaceFileExplorer({openMarkdown,prompt,onRename,beforeRename,showMenu}={}) {
   let root='',relative='',host=null,generation=0,selected=null,entries=[],loading=false,pendingFocus=false;
   let canLeave=()=>true;
-  let mutating=false,renameButton=null;
+  let mutating=false,selectionButtons=[];
   const label=actionLabel(catalog.find(action=>action.id==='switchRightSidebarToFiles'));
   function button(text,run) {const node=document.createElement('button');node.type='button';node.textContent=text;node.onclick=run;return node;}
   function message(key) {const node=document.createElement('p');node.setAttribute('role','status');node.textContent=parityText(key);return node;}
   function select(index) {
     if(!entries.length)return;
     selected=Math.max(0,Math.min(entries.length-1,index));
-    if(renameButton)renameButton.disabled=false;
+    for(const button of selectionButtons)button.disabled=false;
     for(const [i,node] of [...host.querySelectorAll('[role=treeitem]')].entries()) {
       node.setAttribute('aria-selected',String(i===selected));node.tabIndex=i===selected?0:-1;
       if(i===selected)node.focus();
@@ -53,23 +53,31 @@ export function createWorkspaceFileExplorer({openMarkdown,prompt,onRename,before
     const status=message(key);status.className='workspace-file-mutation-status';host.prepend(status);
   }
   async function mutate(kind) {
-    if(mutating || !prompt || !canLeave())return;
+    if(mutating || !canLeave())return;
     const entry=entries[selected],requestedRoot=root,parent=relative,request=generation;
-    if(kind==='rename' && !entry)return;
-    const title=parityText(kind==='rename'?'renameEntry':kind==='folder'?'newFolder':'newFile');
-    const name=await prompt({title,value:kind==='rename'?entry.name:'',confirmLabel:parityText(kind==='rename'?'renameEntry':'createEntry'),cancelLabel:parityText('cancel')});
-    if(name===null || requestedRoot!==root || request!==generation)return;
+    if(['rename','duplicate','trash'].includes(kind) && !entry)return;
+    let name;
+    if(!['duplicate','trash'].includes(kind)) {
+      if(!prompt)return;
+      const title=parityText(kind==='rename'?'renameEntry':kind==='folder'?'newFolder':'newFile');
+      name=await prompt({title,value:kind==='rename'?entry.name:'',confirmLabel:parityText(kind==='rename'?'renameEntry':'createEntry'),cancelLabel:parityText('cancel')});
+      if(name===null || requestedRoot!==root || request!==generation)return;
+    }
     if(kind==='rename')try{beforeRename?.(requestedRoot,entry.path,entry.path.slice(0,-entry.name.length)+name);}catch{mutationStatus('draftError');return;}
     mutating=true;
     try {
-      const result=kind==='rename'?await window.cmuxNative.renameWorkspaceEntry(root,entry.path,name):await window.cmuxNative.createWorkspaceEntry(root,parent,name,kind);
+      const neighbor=entries[selected+1]?.path || entries[selected-1]?.path || null;
+      const result=kind==='rename'?await window.cmuxNative.renameWorkspaceEntry(root,entry.path,name)
+        :kind==='duplicate'?await window.cmuxNative.duplicateWorkspaceEntry(root,entry.path,parityText('duplicateName'))
+        :kind==='trash'?await window.cmuxNative.trashWorkspaceEntry(root,entry.path)
+        :await window.cmuxNative.createWorkspaceEntry(root,parent,name,kind);
       if(requestedRoot!==root || request!==generation)return;
       if(!result?.ok){mutationStatus(result?.error==='entry_exists'?'entryExists':result?.error==='invalid_name'?'invalidName':'mutationError');return;}
       const preview=kind==='file' || (kind==='rename' && !entry.directory && Boolean(host.querySelector('.workspace-file-preview')));
       let syncError=false;
       if(kind==='rename')try{await onRename?.(requestedRoot,entry.path,result.path);}catch{syncError=true;}
       if(requestedRoot!==root)return;
-      await load(parent,{selectPath:result.path,preview});
+      await load(parent,{selectPath:kind==='trash'?neighbor:result.path,preview});
       if(syncError)mutationStatus('draftError');
     }catch{if(requestedRoot===root)mutationStatus('mutationError');}
     finally{mutating=false;}
@@ -77,7 +85,7 @@ export function createWorkspaceFileExplorer({openMarkdown,prompt,onRename,before
   async function load(next='',{selectPath=null,preview=false}={}) {
     if(!canLeave())return;
     const request=++generation,requestedRoot=root;
-    relative=next;selected=null;entries=[];loading=true;host.replaceChildren(message('loading'));
+    relative=next;selected=null;entries=[];selectionButtons=[];loading=true;host.replaceChildren(message('loading'));
     const result=await window.cmuxNative.listWorkspaceFiles(root,next);
     if(request!==generation || root!==requestedRoot || !host?.isConnected)return;
     loading=false;
@@ -87,9 +95,9 @@ export function createWorkspaceFileExplorer({openMarkdown,prompt,onRename,before
     const up=button(parityText('parent'),()=>load(relative.split(/[\\/]/).slice(0,-1).join('/')));up.disabled=!relative;
     up.dataset.fileAction='parent';
     toolbar.append(up,button(parityText('refresh'),()=>load(relative)));
-    for(const [kind,key] of [['file','newFile'],['folder','newFolder'],['rename','renameEntry']]) {
+    for(const [kind,key] of [['file','newFile'],['folder','newFolder'],['rename','renameEntry'],['duplicate','duplicateEntry'],['trash','trashEntry']]) {
       const action=button(parityText(key),()=>mutate(kind));action.dataset.fileMutation=kind;
-      if(kind==='rename'){renameButton=action;action.disabled=true;}
+      if(['rename','duplicate','trash'].includes(kind)){selectionButtons.push(action);action.disabled=true;}
       toolbar.append(action);
     }
     const path=document.createElement('div');path.className='workspace-files-path';path.textContent=relative || root;
@@ -97,8 +105,16 @@ export function createWorkspaceFileExplorer({openMarkdown,prompt,onRename,before
     for(const [index,entry] of entries.entries()) {
       const item=button(`${entry.directory?'▸ ':''}${entry.name}`,()=>{select(index);openSelection();});
       item.setAttribute('role','treeitem');item.setAttribute('aria-selected','false');item.tabIndex=index===0?0:-1;item.dataset.filePath=entry.path;
-      item.onfocus=()=>{selected=index;if(renameButton)renameButton.disabled=false;for(const node of tree.children){node.setAttribute('aria-selected',String(node===item));node.tabIndex=node===item?0:-1;}};
+      item.onfocus=()=>{selected=index;for(const button of selectionButtons)button.disabled=false;for(const node of tree.children){node.setAttribute('aria-selected',String(node===item));node.tabIndex=node===item?0:-1;}};
+      const contextMenu=event=>{
+        if(!showMenu || mutating)return;
+        event.preventDefault();event.stopPropagation();select(index);
+        showMenu(event,[['rename','renameEntry'],['duplicate','duplicateEntry'],['trash','trashEntry']].map(([kind,key])=>({id:kind,label:parityText(key),run:()=>mutate(kind)})),item);
+      };
+      item.oncontextmenu=contextMenu;
       item.onkeydown=event=>{
+        if(event.key==='ContextMenu' || (event.key==='F10' && event.shiftKey)){contextMenu(event);return;}
+
         const delta={ArrowDown:1,ArrowUp:-1}[event.key];
         if(delta!==undefined){event.preventDefault();select(index+delta);}
         else if(event.key==='Home' || event.key==='End'){event.preventDefault();select(event.key==='Home'?0:entries.length-1);}

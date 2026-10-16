@@ -59,6 +59,12 @@ test('duplicate and trash preserve siblings, copy folders and act on links rathe
     await files.trash(root,'notes.md');assert.equal(await fs.readFile(path.join(bin,'notes.md'),'utf8'),'original');
     assert.equal(await fs.readFile(path.join(root,'notes copy.md'),'utf8'),'original');
     assert.equal(trashed.length,3);
+    const failing=new WorkspaceFiles({trash:async()=>{throw Error('recycle_failed');}});
+    await assert.rejects(failing.trash(root,'notes copy.md'),/recycle_failed/);
+    assert.equal(await fs.readFile(path.join(root,'notes copy.md'),'utf8'),'original');
+    const copies=await Promise.all([files.duplicate(root,'notes copy.md'),files.duplicate(root,'notes copy.md')]);
+    assert.notEqual(copies[0].path,copies[1].path);
+    for(const copy of copies)assert.equal(await fs.readFile(path.join(root,copy.path),'utf8'),'original');
     const unavailable=new WorkspaceFiles();await assert.rejects(unavailable.trash(root,'notes copy.md'),/trash_unavailable/);
     assert.equal(await fs.readFile(path.join(root,'notes copy.md'),'utf8'),'original');
   }finally{await fs.rm(folder,{recursive:true,force:true});}

@@ -61,6 +61,7 @@ The runtime listens on `\\.\pipe\cmux-windows` on Windows and falls back to a te
 
 Implemented in this milestone:
 
+- Workspace file tools create, rename and duplicate files/folders, and move entries to the Windows Recycle Bin. Toolbar and accessible context-menu actions share the same serialized backend.
 - Windows desktop shell with workspace sidebar, surface tabs, split panes, and command palette for commands, workspaces, panes, and Settings categories.
 - Terminal panes backed by Windows ConPTY, using node-pty's bundled ConPTY DLL. Settings > Terminal offers an optional WebGL renderer; SIXEL and iTerm inline images are supported.
 - Browser panes through Electron `webview`, with iframe fallback outside Electron.

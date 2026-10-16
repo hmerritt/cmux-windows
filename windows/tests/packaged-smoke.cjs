@@ -184,12 +184,19 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     const renamed=await evaluate(`window.cmuxNative.renameWorkspaceEntry(${JSON.stringify(documentRoot)},'new.txt','renamed.txt')`);
     assert(renamed.ok,'Packaged no-replace rename helper must execute');
     assert.equal(fs.readFileSync(path.join(documentRoot,'renamed.txt'),'utf8'),'Packaged rename content');
+    const duplicated=await evaluate(`window.cmuxNative.duplicateWorkspaceEntry(${JSON.stringify(documentRoot)},'renamed.txt','%@ copy')`);
+    assert(duplicated.ok,'Packaged duplicate IPC must load');
+    assert.equal(fs.readFileSync(path.join(documentRoot,duplicated.path),'utf8'),'Packaged rename content');
+    const trashed=await evaluate(`window.cmuxNative.trashWorkspaceEntry(${JSON.stringify(documentRoot)},${JSON.stringify(duplicated.path)})`);
+    assert(trashed.ok,'Packaged Recycle Bin IPC must execute');
+    assert(!fs.existsSync(path.join(documentRoot,duplicated.path)));
+    assert.equal(fs.readFileSync(path.join(documentRoot,'renamed.txt'),'utf8'),'Packaged rename content');
     const screenshot=await call('Page.captureScreenshot',{format:'png'});
     fs.mkdirSync(path.resolve(__dirname,'../test-output'),{recursive:true});
     fs.writeFileSync(path.resolve(__dirname,'../test-output/packaged.png'),Buffer.from(screenshot.data,'base64'));
     await evaluate('window.cmuxNative.closeWindow()');
     await Promise.race([exited,delay(10000).then(()=>{throw new Error('Packaged app did not close');})]);
-    console.log('PASS packaged cmux.exe: ConPTY, WebGL, inline images, file IPC, keyboard split, Markdown, local images, Mermaid, Git diff, directory search, file creation/rename, clean close');
+    console.log('PASS packaged cmux.exe: ConPTY, WebGL, inline images, file IPC, keyboard split, Markdown, local images, Mermaid, Git diff, directory search, file creation/rename/duplicate and Recycle Bin, clean close');
   } finally {
     socket?.close();
     if(child.exitCode===null) {
