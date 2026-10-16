@@ -9,6 +9,7 @@ const { formatMessage, t } = require("./i18n.cjs");
 const {ShortcutConfig} = require('./shortcut-config.cjs');
 const workspaceFiles=new (require('./workspace-files.cjs').WorkspaceFiles)({trash:target=>shell.trashItem(target)});
 const workspaceGit=new (require('./workspace-git.cjs').WorkspaceGit)();
+const diffPreferences=new (require('./diff-preferences.cjs').DiffPreferences)(process.env.CMUX_DIFF_VIEWER_PREFS_PATH || path.join(process.env.APPDATA || app.getPath('appData'),'cmux','diff-viewer','preferences.json'));
 const workspaceSearch=new (require('./workspace-search.cjs').WorkspaceSearch)();
 const workspaceSearchRequests=new Map();
 const workspaceSearchRenderers=new WeakSet();
@@ -745,6 +746,14 @@ if (!hasLock) {
     try{return {ok:true,...await workspaceSearch.search(root,query,{signal:controller.signal})};}
     catch(error){return {ok:false,error:error.message};}
     finally{if(workspaceSearchRequests.get(id)===controller)workspaceSearchRequests.delete(id);}
+  },null));
+  ipcMain.handle('diff:preferences:get',trustedIpcHandler(async()=>({ok:true,preferences:await diffPreferences.get()}),null));
+  ipcMain.handle('diff:preferences:set',trustedIpcHandler(async(_event,updates)=>{
+    try {
+      const preferences=await diffPreferences.merge(updates);
+      for(const window of BrowserWindow.getAllWindows())window.webContents.send('diff:preferences-changed',preferences);
+      return {ok:true,preferences};
+    }catch{return {ok:false,error:'preferences_error'};}
   },null));
   ipcMain.handle('git:status',trustedIpcHandler(async(_event,root)=>{
     try{return {ok:true,...await workspaceGit.status(root)};}catch(error){return {ok:false,error:error.message};}

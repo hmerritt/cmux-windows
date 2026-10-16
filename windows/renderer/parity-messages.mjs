@@ -89,3 +89,16 @@ const removalLabels={
   ja:['複製','ごみ箱に移動','%@ のコピー']
 };
 for(const [locale,values] of Object.entries(removalLabels))for(const [index,key] of ['duplicateEntry','trashEntry','duplicateName'].entries())messages[locale][key]=values[index];
+
+const diffDisplayLabels={
+  en:['Unified','Split','Word wrap','Line numbers','Change backgrounds','Unable to save diff display preferences.'],
+  de:['Vereinheitlicht','Geteilt','Zeilenumbruch','Zeilennummern','Änderungshintergründe','Die Anzeigeeinstellungen für Diffs konnten nicht gespeichert werden.'],
+  fr:['Unifié','Côte à côte','Retour à la ligne','Numéros de ligne','Arrière-plans des modifications','Impossible d’enregistrer les préférences d’affichage des différences.'],
+  es:['Unificado','Dividido','Ajuste de línea','Números de línea','Fondos de cambios','No se pueden guardar las preferencias de visualización de diferencias.'],
+  ar:['موحّد','جنبًا إلى جنب','التفاف الكلمات','أرقام الأسطر','خلفيات التغييرات','تعذر حفظ تفضيلات عرض الفروق.'],
+  'zh-Hans':['统一视图','并排视图','自动换行','行号','变更背景','无法保存差异显示偏好设置。'],
+  'zh-Hant':['統一檢視','並排檢視','自動換行','行號','變更背景','無法儲存差異顯示偏好設定。'],
+  ko:['통합 보기','나란히 보기','자동 줄바꿈','줄 번호','변경 배경','차이 표시 환경설정을 저장할 수 없습니다.'],
+  ja:['統合表示','左右分割','折り返し','行番号','変更箇所の背景','差分表示の設定を保存できません。']
+};
+for(const [locale,values] of Object.entries(diffDisplayLabels))for(const [index,key] of ['diffUnified','diffSplit','diffWordWrap','diffLineNumbers','diffBackgrounds','diffPreferenceError'].entries())messages[locale][key]=values[index];

@@ -26,6 +26,7 @@ It does not execute Apple SwiftUI or the macOS GhosttyKit binary.
 | File editor actions | Save and Word Wrap use the shared shortcut registry, including live rebinding/unbinding. Word wrap is persisted and reflows open editors. Desktop tests cover default/rebound keys and the canonical menu save action. |
 | Markdown panes | File-browser action opens a restored document pane with Preview/Text modes, live disk updates, shared editing, syntax highlighting, tables, local images, Mermaid diagrams, contextual zoom and find across formatted text. Shared upstream parser and sanitizer assets are shipped locally. |
 | Git diff panes | Canonical action opens a read-only viewer for staged, working, renamed and untracked changes. File search, file/hunk navigation, scrolling and persistent viewed marks work through contextual shortcuts. Git runs without shell interpolation, external diff drivers or text conversion; literal filenames and binary/large-file limits are tested. |
+| Diff display preferences | Unified and split layouts retain real old/new line numbers, unequal replacement blocks and missing-newline markers. Word wrap, line numbers and change backgrounds update live across panes and survive reload. A shared JSON preference file uses the native schema and `CMUX_DIFF_VIEWER_PREFS_PATH` override; writes merge serially and replace atomically. |
 | Settings search | Rapid native text insertion and Escape-to-clear retain the controlled query without resetting typed text. |
 | New UI translations | Rendering-engine and file-browser copy supplied in all nine supported locales; tests check locale selection and missing strings. |
 | Distribution | `test:packaged` launches the built executable and checks ConPTY, commands, WebGL, inline image pixels, file IPC, keyboard splits, Markdown/local images/Mermaid, real Git diffs, directory search, file creation/rename/duplicate, Recycle Bin and normal close. Unsigned NSIS installer builds successfully. |
@@ -61,7 +62,7 @@ npm run test:packaged
 The original tab-drag regression was committed failing in `8675e3060d`;
 cross-workspace drops were committed failing in `1165162f6e`. The same
 `npm run test:parity` command passes with both implementations. Unit/model tests
-cover 28 behaviors. File-editing regression `3cf324a876` fails with
+cover 30 behaviors. File-editing regression `3cf324a876` fails with
 `node --test tests/workspace-files.test.cjs`; the same command passes with the
 editor implementation. Desktop tests use isolated profiles and private pipes.
 Markdown regression `8918250cad` and Git-viewer regression `e38392c05f`
@@ -79,6 +80,10 @@ window geometry and saved width restoration.
 Duplicate/removal regression `e905e57e8d` fails with
 `node --test tests/file-mutations.test.cjs` and `npm run test:files`;
 both commands pass with folder copying, collision numbering and recoverable removal.
+Diff-layout regression `c9de99c025` fails with `npm run test:documents`;
+the same command passes with split/unified display, line-number geometry, shared
+preferences and renderer reload. Parser/store tests cover line identity, unequal
+changes, missing newlines, file persistence and invalid preferences.
 They do not replace or stop an already running user build.
 
 ## Remaining gaps
@@ -97,8 +102,11 @@ They do not replace or stop an already running user build.
   settings window is not recreated 1:1. The file editor supports existing UTF-8
   files up to 1 MB. File moves, multiple selection, complete explorer menus and the other
   macOS right-sidebar tools remain. Paired macOS visual comparison of the dock
-  remains. Markdown math/Vega and exhaustive rendering parity remain; Git diff
-  staging, review comments and the complete macOS diff presentation remain.
+  remains. Markdown math/Vega and exhaustive rendering parity remain. Git diff
+  branch/patch/last-turn sources, review comments, word-level highlights, expanded
+  context, indicators and the complete macOS diff presentation remain. The audited
+  native diff viewer exposes staged/unstaged viewing; no index-mutating stage or
+  unstage action was found, so the earlier staging gap was an unsupported assumption.
 - **Localization:** 200 unambiguous existing messages are reused from nine
   catalogs/locales, and this batch adds translated renderer/file-browser copy.
   Older Windows-specific and dynamically assembled copy still needs translation.

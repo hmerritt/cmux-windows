@@ -86,18 +86,28 @@ app.once('browser-window-created',(_event,win)=>{
       await evaluate("document.querySelector('[data-diff-layout=split]').click()");
       await waitFor("document.querySelector('.diff-pane').dataset.diffLayout==='split'");
       assert(await evaluate("!!document.querySelector('.diff-split-row .diff-old-line') && !!document.querySelector('.diff-split-row .diff-new-line')"),'Split rows expose old and new line numbers');
+      assert.equal(await evaluate("document.querySelector('.diff-split-row .diff-old-line').textContent"),'1');
+      assert.equal(await evaluate("document.querySelector('.diff-split-row .diff-new-line').textContent"),'1');
       await evaluate("document.querySelector('[data-diff-option=wordWrap]').click()");
       await waitFor("document.querySelector('.diff-pane').dataset.wordWrap==='true'");
+      fs.mkdirSync(path.resolve(__dirname,'../test-output'),{recursive:true});
+      fs.writeFileSync(path.resolve(__dirname,'../test-output/diff-split.png'),(await win.webContents.capturePage()).toPNG());
       await evaluate("document.querySelector('[data-diff-option=lineNumbers]').click()");
       await waitFor("document.querySelector('.diff-pane').dataset.lineNumbers==='false'");
+      assert(await evaluate("getComputedStyle(document.querySelector('.diff-old-line')).display==='none' && getComputedStyle(document.querySelector('.diff-hunk .diff-line:not(.diff-range)')).whiteSpace==='pre-wrap'"),'Display toggles change actual code layout');
       const preferencesReloaded=new Promise(resolve=>win.webContents.once('did-finish-load',resolve));win.webContents.reload();await preferencesReloaded;
       await waitFor("document.querySelector('.diff-pane')?.dataset.diffLayout==='split' && document.querySelector('.diff-patch .diff-split-row')");
       assert(await evaluate("document.querySelector('.diff-pane').dataset.wordWrap==='true' && document.querySelector('.diff-pane').dataset.lineNumbers==='false'"),'Display preferences survive renderer reload');
+      await api('/api/panels',{workspaceId:workspace.id,type:'diff',cwd:root,title:'Second diff'});
+      await waitFor("document.querySelectorAll('.diff-pane').length===2 && [...document.querySelectorAll('.diff-pane')].every(pane=>pane.dataset.diffLayout==='split' && pane.dataset.lineNumbers==='false')");
+      await evaluate("document.querySelector('[data-diff-option=showBackgrounds]').click()");
+      await waitFor("[...document.querySelectorAll('.diff-pane')].every(pane=>pane.dataset.showBackgrounds==='false')");
+      assert(await evaluate("getComputedStyle(document.querySelector('.diff-added')).backgroundColor==='rgba(0, 0, 0, 0)'"),'Background toggle affects rendered additions');
       await evaluate("document.querySelector('[data-diff-layout=unified]').click()");
-      await waitFor("!!document.querySelector('.diff-unified-row')");
+      await waitFor("document.querySelectorAll('.diff-unified-row').length>0 && [...document.querySelectorAll('.diff-pane')].every(pane=>pane.dataset.diffLayout==='unified')");
       fs.mkdirSync(path.resolve(__dirname,'../test-output'),{recursive:true});
       fs.writeFileSync(path.resolve(__dirname,'../test-output/documents.png'),(await win.webContents.capturePage()).toPNG());
-      console.log('PASS Git diff: real changes, viewed marks, file/hunk shortcuts and contextual search');
+      console.log('PASS Git diff: real changes, viewed marks, navigation/search, split/unified layouts, line numbers and persisted display preferences');
     }catch(error){failed=true;console.error(error.stack||error);}
     finally{clearTimeout(deadline);win.destroy();app.quit();}
   });

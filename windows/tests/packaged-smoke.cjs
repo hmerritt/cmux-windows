@@ -157,6 +157,17 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
       await delay(100);
     }
     assert(diffReady,'Packaged Git IPC and real diff pane must load');
+    const preferences=await evaluate("window.cmuxNative.setDiffPreferences({layout:'split',wordWrap:true})");
+    assert(preferences.ok,'Packaged display preferences must save');
+    let splitReady=false;
+    for(let i=0;i<100;i++) {
+      splitReady=await evaluate("document.querySelector('.diff-pane')?.dataset.diffLayout==='split' && !!document.querySelector('.diff-split-row .diff-old-line')");
+      if(splitReady)break;
+      await delay(100);
+    }
+    assert(splitReady,'Packaged split diff layout and line numbers must render');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(profile,'cmux','diff-viewer','preferences.json'),'utf8')).layout,'split');
+
     await evaluate("document.querySelector('.diff-pane').focus()");
     await call('Input.dispatchKeyEvent',{type:'keyDown',key:'F',code:'KeyF',windowsVirtualKeyCode:70,modifiers:10});
     await call('Input.dispatchKeyEvent',{type:'keyUp',key:'F',code:'KeyF',windowsVirtualKeyCode:70,modifiers:10});
@@ -196,7 +207,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     fs.writeFileSync(path.resolve(__dirname,'../test-output/packaged.png'),Buffer.from(screenshot.data,'base64'));
     await evaluate('window.cmuxNative.closeWindow()');
     await Promise.race([exited,delay(10000).then(()=>{throw new Error('Packaged app did not close');})]);
-    console.log('PASS packaged cmux.exe: ConPTY, WebGL, inline images, file IPC, keyboard split, Markdown, local images, Mermaid, Git diff, directory search, file creation/rename/duplicate and Recycle Bin, clean close');
+    console.log('PASS packaged cmux.exe: ConPTY, WebGL, inline images, file IPC, keyboard split, Markdown, local images, Mermaid, split Git diff and saved display preferences, directory search, file creation/rename/duplicate and Recycle Bin, clean close');
   } finally {
     socket?.close();
     if(child.exitCode===null) {
