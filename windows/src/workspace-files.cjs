@@ -64,5 +64,20 @@ class WorkspaceFiles {
     this.writes.set(location.target,operation);
     try{return await operation;}finally{if(this.writes.get(location.target)===operation)this.writes.delete(location.target);}
   }
+  async readImage(root,relative) {
+    const {target}=await this.resolve(root,relative);
+    const handle=await fs.open(target,'r');
+    try {
+      const stat=await handle.stat();if(!stat.isFile())throw Error('not_file');
+      if(stat.size>10*1024*1024)throw Error('file_too_large');
+      const data=Buffer.alloc(10*1024*1024+1);let length=0;
+      while(length<data.length){const {bytesRead}=await handle.read(data,length,data.length-length,length);if(!bytesRead)break;length+=bytesRead;}
+      if(length>10*1024*1024)throw Error('file_too_large');
+      const bytes=data.subarray(0,length);
+      const mime=bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))?'image/png':bytes[0]===255 && bytes[1]===216 && bytes[2]===255?'image/jpeg':/^GIF8[79]a/.test(bytes.subarray(0,6).toString())?'image/gif':bytes.subarray(0,4).toString()==='RIFF' && bytes.subarray(8,12).toString()==='WEBP'?'image/webp':null;
+      if(!mime)throw Error('binary_file');
+      return {dataUrl:`data:${mime};base64,${bytes.toString('base64')}`};
+    }finally{await handle.close();}
+  }
 }
 module.exports={WorkspaceFiles};

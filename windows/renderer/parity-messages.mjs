@@ -35,3 +35,8 @@ const editorLabels={
 };
 for(const [locale,values] of Object.entries(editorLabels))for(const [index,key] of ['editFile','saveFile','discardChanges','unsavedChanges','fileSaved','fileConflict','saveError','draftRecovered','draftError'].entries())messages[locale][key]=values[index];
 export const parityText=key=>messages[currentLocale()]?.[key] || messages.en[key] || key;
+const documentLabels={
+  en:['Open Markdown viewer','Preview','Text'],de:['Markdown-Ansicht öffnen','Vorschau','Quelltext'],fr:['Ouvrir la visionneuse Markdown','Aperçu','Texte'],es:['Abrir visor Markdown','Vista previa','Texto'],ar:['فتح عارض Markdown','معاينة','نص'],
+  'zh-Hans':['打开 Markdown 查看器','预览','文本'],'zh-Hant':['開啟 Markdown 檢視器','預覽','文字'],ko:['Markdown 뷰어 열기','미리 보기','텍스트'],ja:['Markdown ビューアを開く','プレビュー','テキスト']
+};
+for(const [locale,values] of Object.entries(documentLabels))for(const [index,key] of ['openMarkdown','renderedMarkdown','documentText'].entries())messages[locale][key]=values[index];

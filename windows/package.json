@@ -11,7 +11,8 @@
   "main": "src/main.cjs",
   "scripts": {
     "build:shortcuts": "node scripts/export-shortcuts.cjs",
-    "build:locales": "npm run build:shortcuts && node scripts/export-locales.cjs",
+    "build:documents": "node scripts/export-document-assets.cjs",
+    "build:locales": "npm run build:shortcuts && node scripts/export-locales.cjs && npm run build:documents",
     "build:renderer": "npm run build:locales && vite build --mode production --config vite.renderer.config.mjs",
     "build:renderer:dev": "npm run build:locales && vite build --mode development --config vite.renderer.config.mjs",
     "dist:win": "npm run build:renderer && electron-builder --win nsis --x64",
@@ -24,6 +25,7 @@
     "test:packaged": "node tests/packaged-smoke.cjs",
     "test:shortcuts": "electron tests/shortcuts-desktop.cjs",
     "test:parity": "electron tests/parity-desktop.cjs",
+    "test:documents": "electron tests/documents-desktop.cjs",
     "pretest": "npm run build:locales",
     "test": "node --test tests/*.test.cjs",
     "presmoke": "npm run build:locales",

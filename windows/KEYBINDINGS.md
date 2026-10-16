@@ -230,9 +230,9 @@ Windows UI translation completeness.
 | Zoom In (`browserZoomIn`) | `ctrl+=` | `ctrl+shift+=` | Available |
 | Zoom Out (`browserZoomOut`) | `ctrl+-` |  | Available |
 | Actual Size (`browserZoomReset`) | `ctrl+0` |  | Available |
-| Markdown Viewer: Zoom In (`markdownZoomIn`) | `ctrl+=` |  | Requires a feature not yet ported |
-| Markdown Viewer: Zoom Out (`markdownZoomOut`) | `ctrl+-` |  | Requires a feature not yet ported |
-| Markdown Viewer: Actual Size (`markdownZoomReset`) | `ctrl+0` |  | Requires a feature not yet ported |
+| Markdown Viewer: Zoom In (`markdownZoomIn`) | `ctrl+=` |  | Available |
+| Markdown Viewer: Zoom Out (`markdownZoomOut`) | `ctrl+-` |  | Available |
+| Markdown Viewer: Actual Size (`markdownZoomReset`) | `ctrl+0` |  | Available |
 | Find… (`find`) | `ctrl+f` |  | Available |
 | Find in Directory… (`findInDirectory`) | `shift+ctrl+f` |  | Requires a feature not yet ported |
 | Find Next (`findNext`) | `ctrl+g` | `f3` | Available |

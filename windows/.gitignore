@@ -3,6 +3,7 @@ release/
 release-shortcuts/
 release-parity/
 renderer/dist/
+renderer/vendor-documents/
 test-output/
 renderer/catalog-messages.js
 src/catalog-messages.json

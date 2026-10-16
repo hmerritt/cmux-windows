@@ -2,7 +2,9 @@ import "./chrome.js";
 import {parityText} from './parity-messages.mjs';
 import {containModalFocus} from './modal-focus.mjs';
 import {createWorkspaceFileExplorer} from './workspace-files.mjs';
-const workspaceFileExplorer=createWorkspaceFileExplorer();
+import {createDocumentPanes} from './document-panes.mjs';
+const documentPanes=createDocumentPanes({openMarkdown:(root,filePath)=>openMarkdownDocument(root,filePath)});
+const workspaceFileExplorer=createWorkspaceFileExplorer({openMarkdown:(root,filePath)=>openMarkdownDocument(root,filePath)});
 import {PaneTabGroups, replaceTreePanel} from "./pane-tab-groups.js";
 const paneTabGroups = new PaneTabGroups(localStorage);
 import {
@@ -12565,6 +12567,7 @@ function renderPaneNode(panel, workspace, visibleCount) {
       ensureBrowser(panel, body);
     }
   }
+  if(panel.type==='markdown')documentPanes.render(panel,parts.body);
   return pane;
 }
 
@@ -12735,6 +12738,7 @@ function terminalPanelSmartSurfaceTitle(panel) {
 }
 
 function panelDisplayTitle(panel, surface = false) {
+  if(panel.type==='markdown')return panel.title || panel.filePath || 'Markdown';
   if (isPendingPanel(panel)) return panel.title || (panel.type === "browser" ? "Opening browser" : "Starting terminal");
   if (panel.type === "browser") {
     const title = String(panel.title || "").trim();
@@ -13803,6 +13807,7 @@ function clearAllDropTargets() {
 }
 
 function cleanupPanel(panelId) {
+  documentPanes.dispose(panelId);
   if (state.zoomedPanelId === panelId) state.zoomedPanelId = null;
   if (state.focusedPanelId === panelId) state.focusedPanelId = null;
   if (state.lastInteractedPanelId === panelId) state.lastInteractedPanelId = null;
@@ -42545,6 +42550,7 @@ async function createPanel(type, direction = newPaneDirection(), options = {}) {
           shellPath: type === "terminal" && shellProfile === "custom" ? shellPath : undefined,
           terminalFontSize: type === "terminal" ? options.terminalFontSize : undefined,
           cwd: options.cwd || workspace.cwd,
+          filePath: options.filePath,
           url
         })
       });
@@ -43496,6 +43502,9 @@ function focusWorkspaceByOrdinal(ordinal) {
 }
 
 function focusTerminalSession(panelId, options = {}) {
+  if(findPanelState(panelId)?.panel.type==='markdown') {
+    requestAnimationFrame(()=>documentPanes.focus(panelId));return;
+  }
   if (!state.terminals.has(panelId)) {
     const requested = options.deferInitUntilPaint
       ? requestTerminalInitAfterPaint(panelId)
@@ -43770,6 +43779,13 @@ function openInspector(mode) {
 function openWorkspaceFiles() {
   state.inspectorMode='files';updateRailButtons();render();
   requestAnimationFrame(()=>workspaceFileExplorer.focus());
+}
+
+async function openMarkdownDocument(root,filePath) {
+  const workspace=activeWorkspace();if(!workspace)return;
+  const existing=workspace.panels.find(panel=>panel.type==='markdown' && panel.cwd===root && panel.filePath===filePath);
+  if(existing)return focusPanel(existing.id);
+  await createPanel('markdown','right',{cwd:root,filePath,title:filePath.split(/[\\/]/).at(-1),pending:false,operation:false});
 }
 
 function openSettingsCategory(category = "quick", options = {}) {
@@ -45968,7 +45984,7 @@ window.cmuxNative?.getAccessibilitySupport?.().then(setScreenReaderSupport);
 window.cmuxNative?.onAccessibilitySupport?.(setScreenReaderSupport);
 
 const windowsShortcuts = installWindowsShortcuts({
-  state,elements,commands,paneTabGroups,focusedPanel,activePanel,activeWorkspace,transferPaneTabs,openWorkspaceFiles,workspaceFileExplorer,
+  state,elements,commands,paneTabGroups,focusedPanel,activePanel,activeWorkspace,transferPaneTabs,openWorkspaceFiles,workspaceFileExplorer,documentPanes,
   updatePanel,updatePanels,
   isFormEditableTarget,isPanelMinimized,focusPanel,findPanelState,render,
   paneTreeForWorkspace,replacePaneTreePanelId,removePanelFromPaneTree,savePaneTreeLayouts,

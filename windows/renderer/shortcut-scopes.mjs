@@ -4,6 +4,7 @@ const application = `openSettings reloadConfiguration newWindow closeWindow togg
 const terminal = `toggleTerminalCopyMode sendCtrlFToTerminal sizeTerminalToMyWindow clearScreenKeepScrollback increaseWorkspaceTerminalFontSize decreaseWorkspaceTerminalFontSize resetWorkspaceTerminalFontSize useSelectionForFind`;
 const browser = `focusBrowserAddressBar browserBack browserForward browserReload browserHardReload browserZoomIn browserZoomOut browserZoomReset toggleBrowserDeveloperTools showBrowserJavaScriptConsole toggleBrowserFocusMode toggleBrowserDesignMode`;
 export const scopes = Object.fromEntries([
+  ...['markdownZoomIn','markdownZoomOut','markdownZoomReset'].map(id=>[id,'markdown']),
   ['switchRightSidebarToFiles','application'],['fileExplorerOpenSelection','files'],['fileExplorerOpenSelectionFinderAlias','files'],
   ...application.split(' ').map(id=>[id,'application']),
   ...terminal.split(' ').map(id=>[id,'terminal']),
@@ -18,6 +19,7 @@ export function actionAvailable(id, context) {
     case 'application': return !context.commandPaletteVisible || ['commandPalette','openSettings','closeWindow','quit'].includes(id);
     case 'terminal': return context.terminalFocus && !context.commandPaletteVisible;
     case 'browser': return context.browserFocus && !context.commandPaletteVisible;
+    case 'markdown': return context.markdownFocus && !context.commandPaletteVisible;
     case 'surface': return (context.browserFocus || context.terminalFocus) && !context.commandPaletteVisible;
     case 'nonBrowser': return context.terminalFocus && !context.commandPaletteVisible;
     case 'palette': return context.commandPaletteVisible;
