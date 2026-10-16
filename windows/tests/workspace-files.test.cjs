@@ -34,6 +34,7 @@ test('workspace files browse directories and preview bounded UTF-8 without escap
     await fs.writeFile(path.join(folder,'outside.txt'),'private');
     await fs.writeFile(path.join(root,'binary'),Buffer.from([0,1,2]));
     await fs.writeFile(path.join(root,'large.txt'),Buffer.alloc(1024*1024+1,65));
+    await fs.copyFile(path.resolve(__dirname,'../src/assets/cmux.png'),path.join(root,'logo.png'));
     await fs.symlink(folder,path.join(root,'outside-link'),'junction');
     const files=new WorkspaceFiles();
     const list=await files.list(root);
@@ -44,6 +45,9 @@ test('workspace files browse directories and preview bounded UTF-8 without escap
     await assert.rejects(files.read(root,'outside-link/outside.txt'),/outside_root/);
     await assert.rejects(files.read(root,'binary'),/binary_file/);
     await assert.rejects(files.read(root,'large.txt'),/file_too_large/);
+    assert.match((await files.readImage(root,'logo.png')).dataUrl,/^data:image\/png;base64,/);
+    await assert.rejects(files.readImage(root,'binary'),/binary_file/);
+    await assert.rejects(files.readImage(root,'outside-link/outside.txt'),/outside_root/);
   } finally {await fs.rm(folder,{recursive:true,force:true});}
 });
 test('new Windows controls render translated copy for every supported locale',async()=>{

@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld("cmuxNative", {
   listWorkspaceFiles:(root,relative='')=>ipcRenderer.invoke('files:list',root,relative),
   readWorkspaceFile:(root,relative)=>ipcRenderer.invoke('files:read',root,relative),
   readWorkspaceImage:(root,relative)=>ipcRenderer.invoke('files:image',root,relative),
+  workspaceGitStatus:root=>ipcRenderer.invoke('git:status',root),
+  workspaceGitDiff:(root,filePath)=>ipcRenderer.invoke('git:diff',root,filePath),
   writeWorkspaceFile:(root,relative,text,revision)=>ipcRenderer.invoke('files:write',root,relative,text,revision),
   onAccessibilitySupport(callback){ipcRenderer.on('cmux-accessibility',(_event,enabled)=>callback(enabled));},
   getShortcuts: () => ipcRenderer.invoke('shortcuts:get'),

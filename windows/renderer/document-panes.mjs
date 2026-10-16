@@ -1,7 +1,17 @@
 import {parityText} from './parity-messages.mjs';
 import {attachWorkspaceFileEditor} from './file-editor.mjs';
+import {createDocumentFind} from './document-find.mjs';
 
 function button(key,run){const node=document.createElement('button');node.type='button';node.textContent=parityText(key);node.onclick=run;return node;}
+let mermaidLoader;
+function loadMermaid() {
+  if(!mermaidLoader)mermaidLoader=new Promise((resolve,reject)=>{
+    const script=document.createElement('script');script.src='/vendor-documents/mermaid.min.js';
+    script.onload=()=>{globalThis.mermaid.initialize({startOnLoad:false,securityLevel:'strict',theme:'dark',maxTextSize:50000,maxEdges:500});resolve(globalThis.mermaid);};
+    script.onerror=reject;document.head.append(script);
+  });
+  return mermaidLoader;
+}
 export function localDocumentPath(filePath,link) {
   if(!link || /^[a-z][a-z\d+.-]*:/i.test(link) || /^[\\/]/.test(link))return null;
   try {
@@ -33,7 +43,20 @@ export function createDocumentPanes({openMarkdown}={}) {
       const count=counts.get(slug)||0;counts.set(slug,count+1);heading.id=slug+(count?`-${count}`:'');
     }
     for(const image of session.article.querySelectorAll('img[data-document-image]')) {
-      window.cmuxNative.readWorkspaceImage(session.panel.cwd,image.dataset.documentImage).then(result=>{if(result?.ok && image.isConnected)image.src=result.dataUrl;});
+      window.cmuxNative.readWorkspaceImage(session.panel.cwd,image.dataset.documentImage).then(result=>{if(result?.ok && image.isConnected)image.src=result.dataUrl;}).catch(()=>{});
+    }
+    session.find.update();
+    const revision=session.revision;
+    for(const code of session.article.querySelectorAll('pre code.language-mermaid')) {
+      if(code.textContent.length>50000)continue;
+      const source=code.textContent;
+      loadMermaid().then(async mermaid=>{
+        if(session.disposed || session.revision!==revision)return;
+        const {svg}=await mermaid.render(`cmux-diagram-${crypto.randomUUID()}`,source);
+        if(session.disposed || session.revision!==revision || !code.isConnected)return;
+        const diagram=document.createElement('div');diagram.className='document-diagram';
+        diagram.append(sanitizer.sanitizeToFragment(svg,{document,profile:sanitizer.diagramProfile()}));code.parentElement.replaceWith(diagram);session.find.update();
+      }).catch(()=>{}); // Invalid diagrams remain readable as their source code.
     }
   }
   function error(session,key){session.error.textContent=parityText(key);session.error.hidden=false;}
@@ -88,6 +111,7 @@ export function createDocumentPanes({openMarkdown}={}) {
         session.textButton=button('documentText',()=>setMode(session,'text'));session.textButton.dataset.documentAction='text';session.textButton.setAttribute('aria-pressed','false');
         const refreshButton=button('refresh',()=>refresh(session,{force:true}));
         toolbar.append(session.previewButton,session.textButton,refreshButton);content.append(problem,article);host.append(toolbar,content);
+        session.find=createDocumentFind(article,toolbar);
         article.addEventListener('click',event=>{
           const link=event.target.closest('a');if(!link)return;
           event.preventDefault();const href=link.getAttribute('href') || '';
@@ -104,6 +128,7 @@ export function createDocumentPanes({openMarkdown}={}) {
     },
     focus(id){const session=sessions.get(id);if(session?.host.isConnected)session.host.focus();},
     zoom(id,delta,reset=false){const session=sessions.get(id);if(!session)return;session.fontSize=reset?16:Math.max(8,Math.min(48,session.fontSize+delta));session.article.style.fontSize=`${session.fontSize}px`;},
-    dispose(id){const session=sessions.get(id);if(!session)return;session.disposed=true;clearInterval(session.timer);sessions.delete(id);}
+    find(id,{next=false,forward=true,hide=false}={}){const session=sessions.get(id);if(!session)return;if(hide)session.find.hide();else if(next)session.find.next(forward);else session.find.show();},
+    dispose(id){const session=sessions.get(id);if(!session)return;session.disposed=true;clearInterval(session.timer);session.find.dispose();sessions.delete(id);}
   };
 }

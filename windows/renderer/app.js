@@ -3,6 +3,8 @@ import {parityText} from './parity-messages.mjs';
 import {containModalFocus} from './modal-focus.mjs';
 import {createWorkspaceFileExplorer} from './workspace-files.mjs';
 import {createDocumentPanes} from './document-panes.mjs';
+import {createDiffPanes} from './diff-panes.mjs';
+const diffPanes=createDiffPanes();
 const documentPanes=createDocumentPanes({openMarkdown:(root,filePath)=>openMarkdownDocument(root,filePath)});
 const workspaceFileExplorer=createWorkspaceFileExplorer({openMarkdown:(root,filePath)=>openMarkdownDocument(root,filePath)});
 import {PaneTabGroups, replaceTreePanel} from "./pane-tab-groups.js";
@@ -259,6 +261,8 @@ const workspaceColorOptions = [...new Set([
   "oklch(76% 0.15 82)"
 ])];
 const controlIconSvg = {
+  markdown: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h9l5 5v13H5Z"></path><path d="M14 3v6h5M8 13h8M8 17h6"></path></svg>`,
+  diff: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M12 4v16M5 10h5M17 8v6M14 11h6"></path></svg>`,
   arrowRight: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg>`,
   back: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 18-6-6 6-6"></path></svg>`,
   caseMatch: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 17 9 7l5 10"></path><path d="M6 13h6"></path><path d="M17 13h2a2 2 0 0 1 0 4h-3V9a2 2 0 0 1 4 0"></path></svg>`,
@@ -4042,7 +4046,7 @@ function createWorkspaceBlueprintId() {
 }
 
 function normalizeBlueprintPanel(panel = {}) {
-  const type = panel.type === "browser" ? "browser" : "terminal";
+  const type = ['browser','markdown','diff'].includes(panel.type)?panel.type:'terminal';
   const title = String(panel.title || (type === "browser" ? "Browser" : "Terminal")).trim().slice(0, 80);
   const color = normalizeBlueprintColor(panel.color);
   const shellProfile = terminalProfiles.some(([id]) => id === panel.shellProfile) ? panel.shellProfile : defaultSettings.terminalProfile;
@@ -4053,6 +4057,7 @@ function normalizeBlueprintPanel(panel = {}) {
     color,
     backgroundImage,
     cwd: String(panel.cwd || "").trim().slice(0, 512),
+    filePath: type==='markdown'?String(panel.filePath || ''):'',
     shellProfile,
     shellPath: String(panel.shellPath || "").trim().slice(0, 512),
     terminalFontSize: type === "terminal" ? normalizeTerminalFontSize(panel.terminalFontSize, 0) : 0,
@@ -11928,7 +11933,7 @@ function updateSurfaceTabStatesOnly(workspace, tabLabels = surfaceTabLabels(work
 
 function updateSurfaceTab(button, workspace, panel, label = surfaceTabLabel(workspace, panel)) {
   const parts = updateSurfaceTabState(button, workspace, panel, label);
-  const iconName = panel.type === "browser" ? "browser" : "terminal";
+  const iconName = ['markdown','diff'].includes(panel.type)?panel.type:panel.type === "browser" ? "browser" : "terminal";
   if (parts.kind && parts.kind.dataset.icon !== iconName) {
     parts.kind.dataset.icon = iconName;
     parts.kind.innerHTML = controlIconMarkup(iconName);
@@ -12501,12 +12506,12 @@ function updatePaneChromeState(pane, panel, workspace) {
 
 function updatePaneTypeBadge(badge, type) {
   if (!badge) return;
-  const kind = type === "browser" ? "browser" : "terminal";
+  const kind = ['markdown','diff'].includes(type)?type:type === "browser" ? "browser" : "terminal";
   if (badge.dataset.paneTypeKind !== kind) {
     badge.innerHTML = controlIconMarkup(kind);
     badge.dataset.paneTypeKind = kind;
   }
-  const label = kind === "browser" ? "Browser pane" : "Terminal pane";
+  const label = ['markdown','diff'].includes(kind)?parityText(kind==='markdown'?'markdownPane':'diffPane'):kind === "browser" ? "Browser pane" : "Terminal pane";
   setTitleIfChanged(badge, label);
   setAttributeIfChanged(badge, "aria-label", label);
 }
@@ -12568,6 +12573,7 @@ function renderPaneNode(panel, workspace, visibleCount) {
     }
   }
   if(panel.type==='markdown')documentPanes.render(panel,parts.body);
+  if(panel.type==='diff')diffPanes.render(panel,parts.body);
   return pane;
 }
 
@@ -12738,7 +12744,7 @@ function terminalPanelSmartSurfaceTitle(panel) {
 }
 
 function panelDisplayTitle(panel, surface = false) {
-  if(panel.type==='markdown')return panel.title || panel.filePath || 'Markdown';
+  if(panel.type==='markdown' || panel.type==='diff')return panel.title || panel.filePath || parityText(panel.type==='diff'?'diffPane':'markdownPane');
   if (isPendingPanel(panel)) return panel.title || (panel.type === "browser" ? "Opening browser" : "Starting terminal");
   if (panel.type === "browser") {
     const title = String(panel.title || "").trim();
@@ -13545,7 +13551,7 @@ function renderPaneTabStrip(pane, selected, workspace) {
     tab.tabIndex = member.id === selected.id ? 0 : -1;
     const icon = document.createElement('span');
     icon.className = 'pane-tab-icon';
-    icon.innerHTML = controlIconMarkup(member.type === 'browser' ? 'browser' : 'terminal');
+    icon.innerHTML = controlIconMarkup(['markdown','diff'].includes(member.type)?member.type:member.type === 'browser' ? 'browser' : 'terminal');
     icon.setAttribute('aria-hidden','true');
     const label = document.createElement('span');
     label.className = 'pane-tab-label';
@@ -13808,6 +13814,7 @@ function clearAllDropTargets() {
 
 function cleanupPanel(panelId) {
   documentPanes.dispose(panelId);
+  diffPanes.dispose(panelId);
   if (state.zoomedPanelId === panelId) state.zoomedPanelId = null;
   if (state.focusedPanelId === panelId) state.focusedPanelId = null;
   if (state.lastInteractedPanelId === panelId) state.lastInteractedPanelId = null;
@@ -31394,6 +31401,7 @@ function paneLayoutPresetBlueprint(preset, options = {}) {
       color: panel.color || "",
       backgroundImage: panel.backgroundImage || "",
       cwd: panel.cwd || workspace.cwd || "",
+      filePath: panel.filePath || '',
       shellProfile: panel.shellProfile || state.settings.terminalProfile,
       shellPath: panel.shellPath || "",
       terminalFontSize: panel.terminalFontSize || 0,
@@ -37830,6 +37838,7 @@ function currentWorkspaceBlueprintSnapshot(label, overrides = {}) {
       color: panel.color || "",
       backgroundImage: panel.backgroundImage || "",
       cwd: panel.cwd || workspace.cwd || "",
+      filePath: panel.filePath || '',
       shellProfile: panel.shellProfile || state.settings.terminalProfile,
       shellPath: panel.shellPath || "",
       terminalFontSize: panel.terminalFontSize || 0,
@@ -37851,6 +37860,7 @@ function workspaceBlueprintComparableModel(blueprint) {
       color: panel.color || "",
       backgroundImage: panel.backgroundImage || "",
       cwd: panel.cwd || "",
+      filePath: panel.filePath || '',
       shellProfile: panel.shellProfile || "",
       shellPath: panel.shellPath || "",
       terminalFontSize: panel.terminalFontSize || 0,
@@ -37969,6 +37979,8 @@ async function applyWorkspaceBlueprint(blueprintId, workspaceId = activeWorkspac
         color: panel.color,
         backgroundImage: panel.backgroundImage,
         cwd: panel.cwd || blueprint.cwd || workspace.cwd,
+        filePath: panel.filePath,
+        pending:!['markdown','diff'].includes(panel.type),
         shellProfile: panel.shellProfile,
         shellPath: panel.shellPath,
         terminalFontSize: panel.terminalFontSize,
@@ -39323,6 +39335,9 @@ function splitPanelFromPaneId(panelId, direction, type = "terminal", options = {
 }
 
 function duplicatePanel(panel) {
+  if(['markdown','diff'].includes(panel.type)) {
+    splitPanel(panel,newPaneDirection(),panel.type,{cwd:panel.cwd,filePath:panel.filePath,title:panel.title,pending:false});return;
+  }
   if (panel.type === "browser") {
     splitPanel(panel, newPaneDirection(), "browser", {
       url: panel.url || state.settings.browserHomeUrl,
@@ -42948,6 +42963,7 @@ function closedPanelSnapshot(panelId) {
     color: found.panel.color || "",
     backgroundImage: found.panel.type === "terminal" ? found.panel.backgroundImage || "" : "",
     cwd: found.panel.cwd || found.workspace.cwd || "",
+    filePath: found.panel.filePath || '',
     shellProfile: found.panel.shellProfile || state.settings.terminalProfile,
     shellPath: found.panel.shellPath || "",
     terminalFontSize: found.panel.terminalFontSize || 0,
@@ -42982,6 +42998,8 @@ async function reopenClosedPanel() {
       color: snapshot.color,
       backgroundImage: snapshot.backgroundImage,
       cwd: snapshot.cwd || workspace.cwd,
+      filePath: snapshot.filePath,
+      pending:!['markdown','diff'].includes(snapshot.type),
       shellProfile: snapshot.shellProfile,
       shellPath: snapshot.shellPath,
       terminalFontSize: snapshot.terminalFontSize,
@@ -43505,6 +43523,9 @@ function focusTerminalSession(panelId, options = {}) {
   if(findPanelState(panelId)?.panel.type==='markdown') {
     requestAnimationFrame(()=>documentPanes.focus(panelId));return;
   }
+  if(findPanelState(panelId)?.panel.type==='diff') {
+    requestAnimationFrame(()=>diffPanes.focus(panelId));return;
+  }
   if (!state.terminals.has(panelId)) {
     const requested = options.deferInitUntilPaint
       ? requestTerminalInitAfterPaint(panelId)
@@ -43786,6 +43807,13 @@ async function openMarkdownDocument(root,filePath) {
   const existing=workspace.panels.find(panel=>panel.type==='markdown' && panel.cwd===root && panel.filePath===filePath);
   if(existing)return focusPanel(existing.id);
   await createPanel('markdown','right',{cwd:root,filePath,title:filePath.split(/[\\/]/).at(-1),pending:false,operation:false});
+}
+
+async function openDiffViewer() {
+  const workspace=activeWorkspace();if(!workspace)return;
+  const existing=workspace.panels.find(panel=>panel.type==='diff' && panel.cwd===workspace.cwd);
+  if(existing)return focusPanel(existing.id);
+  await createPanel('diff','right',{cwd:workspace.cwd,title:parityText('diffPane'),pending:false,operation:false});
 }
 
 function openSettingsCategory(category = "quick", options = {}) {
@@ -45984,7 +46012,7 @@ window.cmuxNative?.getAccessibilitySupport?.().then(setScreenReaderSupport);
 window.cmuxNative?.onAccessibilitySupport?.(setScreenReaderSupport);
 
 const windowsShortcuts = installWindowsShortcuts({
-  state,elements,commands,paneTabGroups,focusedPanel,activePanel,activeWorkspace,transferPaneTabs,openWorkspaceFiles,workspaceFileExplorer,documentPanes,
+  state,elements,commands,paneTabGroups,focusedPanel,activePanel,activeWorkspace,transferPaneTabs,openWorkspaceFiles,workspaceFileExplorer,documentPanes,diffPanes,openDiffViewer,
   updatePanel,updatePanels,
   isFormEditableTarget,isPanelMinimized,focusPanel,findPanelState,render,
   paneTreeForWorkspace,replacePaneTreePanelId,removePanelFromPaneTree,savePaneTreeLayouts,

@@ -1,5 +1,5 @@
 // Verify the distributable with its packaged, in-process runtime and native PTY.
-const { spawn } = require('node:child_process');
+const { spawn, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -132,12 +132,37 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
       await delay(100);
     }
     assert(split,'Packaged Ctrl+D must create a split through the shipped shortcut module');
+    const documentRoot=path.join(profile,'documents');
+    fs.mkdirSync(documentRoot);
+    fs.writeFileSync(path.join(documentRoot,'notes.md'),'# Packaged document\n\n![Local](local.png)\n\n```mermaid\nflowchart LR\nA --> B\n```\n');
+    fs.copyFileSync(path.resolve(__dirname,'../src/assets/cmux.png'),path.join(documentRoot,'local.png'));
+    const git=(...args)=>execFileSync('git',['-C',documentRoot,...args],{windowsHide:true,stdio:'pipe'});
+    git('init');git('config','user.name','Test');git('config','user.email','test@example.invalid');
+    git('add','.');git('commit','-m','Packaged fixture');
+    fs.appendFileSync(path.join(documentRoot,'notes.md'),'\nPackaged change\n');
+    const documents=await api('/api/workspaces',{title:'Packaged documents',cwd:documentRoot});
+    await api('/api/panels',{workspaceId:documents.id,type:'markdown',cwd:documentRoot,filePath:'notes.md',title:'notes.md'});
+    let documentReady=false;
+    for(let i=0;i<150;i++) {
+      documentReady=await evaluate("document.querySelector('.markdown-body h1')?.textContent==='Packaged document' && document.querySelector('.markdown-body img')?.naturalWidth>0 && !!document.querySelector('.document-diagram svg')");
+      if(documentReady)break;
+      await delay(100);
+    }
+    assert(documentReady,'Packaged Markdown, scoped local images and Mermaid assets must render');
+    await api('/api/panels',{workspaceId:documents.id,type:'diff',cwd:documentRoot,title:'Git diff'});
+    let diffReady=false;
+    for(let i=0;i<100;i++) {
+      diffReady=await evaluate("document.querySelector('.diff-patch')?.textContent.includes('+Packaged change')");
+      if(diffReady)break;
+      await delay(100);
+    }
+    assert(diffReady,'Packaged Git IPC and real diff pane must load');
     const screenshot=await call('Page.captureScreenshot',{format:'png'});
     fs.mkdirSync(path.resolve(__dirname,'../test-output'),{recursive:true});
     fs.writeFileSync(path.resolve(__dirname,'../test-output/packaged.png'),Buffer.from(screenshot.data,'base64'));
     await evaluate('window.cmuxNative.closeWindow()');
     await Promise.race([exited,delay(10000).then(()=>{throw new Error('Packaged app did not close');})]);
-    console.log('PASS packaged cmux.exe: native ConPTY, workspace creation, command execution, rendered output, WebGL, inline image pixels, file IPC, keyboard split, clean close');
+    console.log('PASS packaged cmux.exe: ConPTY, WebGL, inline images, file IPC, keyboard split, Markdown, local images, Mermaid, Git diff, clean close');
   } finally {
     socket?.close();
     if(child.exitCode===null) {

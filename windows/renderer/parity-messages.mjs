@@ -40,3 +40,15 @@ const documentLabels={
   'zh-Hans':['打开 Markdown 查看器','预览','文本'],'zh-Hant':['開啟 Markdown 檢視器','預覽','文字'],ko:['Markdown 뷰어 열기','미리 보기','텍스트'],ja:['Markdown ビューアを開く','プレビュー','テキスト']
 };
 for(const [locale,values] of Object.entries(documentLabels))for(const [index,key] of ['openMarkdown','renderedMarkdown','documentText'].entries())messages[locale][key]=values[index];
+const diffLabels={
+  en:['Markdown pane','Git diff','Search files','Changed files','Staged changes','Working changes','No changes.','Unable to read this Git repository.','Binary file changes.','This diff exceeds the 4 MB display limit.'],
+  de:['Markdown-Bereich','Git-Änderungen','Dateien suchen','Geänderte Dateien','Vorgemerkte Änderungen','Arbeitskopie-Änderungen','Keine Änderungen.','Dieses Git-Repository kann nicht gelesen werden.','Änderungen an Binärdateien.','Dieser Diff überschreitet die Anzeigegrenze von 4 MB.'],
+  fr:['Volet Markdown','Différences Git','Rechercher des fichiers','Fichiers modifiés','Modifications indexées','Modifications de travail','Aucune modification.','Impossible de lire ce dépôt Git.','Modifications d’un fichier binaire.','Ce diff dépasse la limite d’affichage de 4 Mo.'],
+  es:['Panel Markdown','Diferencias de Git','Buscar archivos','Archivos modificados','Cambios preparados','Cambios de trabajo','Sin cambios.','No se puede leer este repositorio Git.','Cambios en archivo binario.','Este diff supera el límite de visualización de 4 MB.'],
+  ar:['لوحة Markdown','فروق Git','البحث عن ملفات','الملفات المعدلة','التغييرات المرحّلة','تغييرات العمل','لا توجد تغييرات.','تعذرت قراءة مستودع Git هذا.','تغييرات في ملف ثنائي.','تتجاوز هذه الفروق حد العرض البالغ 4 ميغابايت.'],
+  'zh-Hans':['Markdown 窗格','Git 差异','搜索文件','已更改的文件','已暂存的更改','工作区更改','没有更改。','无法读取此 Git 仓库。','二进制文件更改。','此差异超出 4 MB 显示限制。'],
+  'zh-Hant':['Markdown 窗格','Git 差異','搜尋檔案','已變更的檔案','已暫存的變更','工作目錄變更','沒有變更。','無法讀取此 Git 儲存庫。','二進位檔案變更。','此差異超出 4 MB 顯示限制。'],
+  ko:['Markdown 창','Git 차이','파일 검색','변경된 파일','스테이징된 변경 사항','작업 변경 사항','변경 사항이 없습니다.','Git 저장소를 읽을 수 없습니다.','바이너리 파일 변경 사항.','이 차이는 4MB 표시 제한을 초과합니다.'],
+  ja:['Markdown ペイン','Git 差分','ファイルを検索','変更されたファイル','ステージ済みの変更','作業中の変更','変更はありません。','この Git リポジトリを読み取れません。','バイナリファイルの変更。','この差分は表示上限の 4 MB を超えています。']
+};
+for(const [locale,values] of Object.entries(diffLabels))for(const [index,key] of ['markdownPane','diffPane','searchFiles','changedFiles','stagedChanges','workingChanges','noChanges','gitError','binaryDiff','diffLimit'].entries())messages[locale][key]=values[index];

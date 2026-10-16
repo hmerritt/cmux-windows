@@ -19,6 +19,8 @@ test('Git viewer lists staged, working, renamed and untracked paths and never ru
     await fs.writeFile(path.join(root,'[draft] file.txt'),'日本語\n');
     await fs.writeFile(path.join(root,'binary.dat'),Buffer.from([0,1,2]));
     git('config','diff.external','cmux-must-never-execute');
+    await fs.writeFile(path.join(root,'.gitattributes'),'notes.md diff=unsafe\n');
+    git('config','diff.unsafe.textconv','cmux-must-never-execute');
     const viewer=new WorkspaceGit();
     const status=await viewer.status(root);
     assert.equal(status.root,await fs.realpath(root));

@@ -9,6 +9,27 @@
 .document-content .markdown-body table tr:nth-child(2n) { background:#ffffff08; }
 .document-content .markdown-body a { color:#58a6ff; }
 .document-content .markdown-body img { max-width:100%; background:transparent; }
+.document-diagram svg { max-width:100%; height:auto; }
 .document-text-editor { margin:0; }
 .document-text-editor textarea { min-height:400px; }
 .document-pane [hidden] { display:none !important; }
+.diff-layout { display:flex; flex:1; min-height:0; overflow:hidden; }
+.diff-file-list { flex:0 0 190px; max-width:40%; overflow:auto; border-right:1px solid #ffffff15; padding:6px; }
+.diff-file { display:block; width:100%; padding:7px; border:0; text-align:left; background:transparent; color:inherit; font:11px/1.4 var(--font-mono,monospace); overflow-wrap:anywhere; }
+.diff-file[aria-selected=true] { background:#0a84ff33; }
+.diff-file[data-viewed=true]::before { content:'✓ '; color:#73b971; }
+.diff-file-search { min-width:0; width:240px; color:inherit; background:#ffffff08; border:1px solid #ffffff20; border-radius:4px; padding:5px 8px; }
+.diff-patch { flex:1; min-width:0; overflow:auto; padding:12px; }
+.diff-line { margin:0; min-width:max-content; white-space:pre; font:12px/1.6 var(--font-mono,monospace); padding:0 8px; }
+.diff-added { background:#2ea04326; color:#aff5b4; }
+.diff-removed { background:#f8514926; color:#ffdcd7; }
+.diff-range { background:#388bfd22; color:#79c0ff; }
+.diff-hunk { margin:8px 0 16px; }
+.diff-hunk.is-current { outline:1px solid #0a84ff; }
+.diff-section-title { font:600 12px var(--font-ui,sans-serif); }
+.diff-notice { padding:0 12px; }
+.document-find { display:flex; align-items:center; gap:6px; margin-left:auto; }
+.document-find input { width:150px; background:#ffffff0a; border:1px solid #ffffff20; color:inherit; padding:4px; }
+.document-find output { font:11px var(--font-mono,monospace); }
+::highlight(cmux-document-find) { background:#b38c2255; color:inherit; }
+::highlight(cmux-document-current) { background:#dba925; color:#111; }

@@ -10,8 +10,9 @@ process.env.CMUX_WINDOWS_CONFIG=path.join(profile,'cmux.json');
 process.env.CMUX_WINDOWS_PIPE=`\\\\.\\pipe\\cmux-documents-${process.pid}`;
 app.setPath('userData',path.join(profile,'electron'));
 const root=path.join(profile,'workspace');fs.mkdirSync(root);
-const markdown='# Document parity\n\n| Name | Value |\n| --- | --- |\n| Safe | Yes |\n\n```js\nconst answer = 42;\n```\n\n<script>window.documentAttack=true</script>\n<img src="x" onerror="window.documentAttack=true">\n[Bad](javascript:alert(1))\n';
+const markdown='# Document parity\n\n| Name | Value |\n| --- | --- |\n| Safe | Yes |\n\n```js\nconst answer = 42;\n```\n\nFind **across nodes** here. İ Unicode.\n\n![Local](local.png)\n\n```mermaid\nflowchart LR\nA[Input] --> B[Output]\n```\n\n<script>window.documentAttack=true</script>\n<img src="x" onerror="window.documentAttack=true">\n[Bad](javascript:alert(1))\n';
 fs.writeFileSync(path.join(root,'notes.md'),markdown);
+fs.copyFileSync(path.resolve(__dirname,'../src/assets/cmux.png'),path.join(root,'local.png'));
 const git=(...args)=>execFileSync('git',['-C',root,...args],{windowsHide:true,stdio:'pipe'});
 git('init');git('config','user.name','Test');git('config','user.email','test@example.invalid');
 fs.writeFileSync(path.join(root,'second.txt'),Array.from({length:50},(_,i)=>`Line ${i}`).join('\n')+'\n');
@@ -35,9 +36,16 @@ app.once('browser-window-created',(_event,win)=>{
       assert.equal(await evaluate("document.querySelectorAll('.document-pane table tbody tr').length"),1);
       assert(await evaluate("document.querySelector('.document-pane code').textContent.includes('answer = 42')"));
       assert(await evaluate("!window.documentAttack && !document.querySelector('.markdown-body script,.markdown-body [onerror],.markdown-body a[href^=javascript]')"));
+      await waitFor("document.querySelector('.markdown-body img[alt=Local]')?.naturalWidth>0");
+      await waitFor("document.querySelector('.document-diagram svg') !== null");
       await evaluate("document.querySelector('.document-pane').focus()");
       await key('=',['control']);
       await waitFor("Number.parseFloat(document.querySelector('.markdown-body').style.fontSize)>16");
+      await key('f',['control']);
+      await waitFor("document.activeElement.matches('.document-find input')");
+      await win.webContents.insertText('across nodes here');
+      await waitFor("document.querySelector('.document-find output').textContent==='1/1'");
+      await key('Escape');
       console.log('PASS Markdown: real pane, headings, tables, code, shared sanitizer and contextual zoom');
       fs.writeFileSync(path.join(root,'notes.md'),'# Live update\n');
       await waitFor("document.querySelector('.markdown-body h1')?.textContent==='Live update'");
@@ -69,6 +77,13 @@ app.once('browser-window-created',(_event,win)=>{
       await waitFor("document.activeElement.matches('.diff-file-search')");
       await win.webContents.insertText('notes');
       await waitFor("document.querySelectorAll('.diff-file-list [data-git-path]:not([hidden])').length===1");
+      await key('Escape');
+      const diffReloaded=new Promise(resolve=>win.webContents.once('did-finish-load',resolve));win.webContents.reload();await diffReloaded;
+      await waitFor("document.querySelector('.diff-pane [data-git-path=\"notes.md\"]') !== null");
+      await evaluate("document.querySelector('[data-git-path=\"notes.md\"]').click()");
+      await waitFor("document.querySelector('[data-git-path=\"notes.md\"]').dataset.viewed==='true'");
+      fs.mkdirSync(path.resolve(__dirname,'../test-output'),{recursive:true});
+      fs.writeFileSync(path.resolve(__dirname,'../test-output/documents.png'),(await win.webContents.capturePage()).toPNG());
       console.log('PASS Git diff: real changes, viewed marks, file/hunk shortcuts and contextual search');
     }catch(error){failed=true;console.error(error.stack||error);}
     finally{clearTimeout(deadline);win.destroy();app.quit();}
