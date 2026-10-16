@@ -1,8 +1,20 @@
 import {parityText} from './parity-messages.mjs';
+const editors=new WeakMap();
+let recentEditor=null;
+const wrapKey='cmux.fileEditor.wordWrap';
+const wraps=()=>{try{return localStorage.getItem(wrapKey)==='true';}catch{return false;}};
+function applyWrap(text){const enabled=wraps();text.wrap=enabled?'soft':'off';text.style.whiteSpace=enabled?'pre-wrap':'pre';}
+export function workspaceFileEditorFor(target,{fallback=false}={}) {
+  const recent=recentEditor?.deref();
+  return editors.get(target) || (fallback && recent?.isConnected?editors.get(recent):undefined);
+}
+function toggleWordWrap(){try{localStorage.setItem(wrapKey,String(!wraps()));}catch{}for(const text of document.querySelectorAll('.workspace-file-preview textarea'))applyWrap(text);}
+window.addEventListener('storage',event=>{if(event.key===wrapKey)for(const text of document.querySelectorAll('.workspace-file-preview textarea'))applyWrap(text);});
 function button(text,run){const node=document.createElement('button');node.type='button';node.textContent=text;node.onclick=run;return node;}
 function message(key){const node=document.createElement('p');node.setAttribute('role','status');node.textContent=parityText(key);return node;}
 
 export function attachWorkspaceFileEditor(preview,text,file,fileRoot,filePath,{reload=()=>{}}={}) {
+    applyWrap(text);
     const draftKey=`cmux.fileDraft:${JSON.stringify([fileRoot,filePath])}`;
     let original=file.text.replaceAll('\r\n','\n'),expectedRevision=file.revision,saving=false,draftStored=true;
     let lineEnding=file.text.includes('\r\n') && !file.text.replaceAll('\r\n','').includes('\n')?'\r\n':'\n';
@@ -38,11 +50,9 @@ export function attachWorkspaceFileEditor(preview,text,file,fileRoot,filePath,{r
       }
     } catch {}
     text.oninput=()=>{showStatus('unsavedChanges');persistDraft();};
-    text.addEventListener('keydown',event=>{
-      if((event.ctrlKey || event.metaKey) && event.key.toLowerCase()==='s' && !text.readOnly) {
-        event.preventDefault();event.stopPropagation();saveFile();
-      }
-    });
+    editors.set(text,{save:saveFile,toggleWordWrap,get editable(){return !text.readOnly;}});
+    text.addEventListener('focus',()=>{recentEditor=new WeakRef(text);});
+    if(document.activeElement===text)recentEditor=new WeakRef(text);
     async function saveFile() {
       if(saving || text.readOnly)return;
       saving=true;save.disabled=true;discard.disabled=true;text.readOnly=true;

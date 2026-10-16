@@ -46,6 +46,7 @@ export function createWorkspaceSearch() {
     label,
     render(nextRoot,container) {
       if(root===nextRoot && host===container && input?.isConnected)return;
+      if(root)window.cmuxNative.searchWorkspaceFiles(root,'').catch(()=>{});
       generation++;clearTimeout(timer);root=nextRoot;host=container;canLeave=()=>true;
       input=document.createElement('input');input.type='search';input.className='workspace-search-input';input.placeholder=label;input.setAttribute('aria-label',label);
       status=document.createElement('p');status.className='workspace-search-status';status.setAttribute('role','status');status.dataset.state='ready';

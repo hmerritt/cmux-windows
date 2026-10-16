@@ -6,6 +6,7 @@ const browser = `focusBrowserAddressBar browserBack browserForward browserReload
 const diff=`diffViewerScrollDown diffViewerScrollUp diffViewerScrollHalfPageDown diffViewerScrollHalfPageUp diffViewerScrollDownEmacs diffViewerScrollUpEmacs diffViewerScrollToBottom diffViewerScrollToTop diffViewerOpenFileSearch diffViewerNextFile diffViewerPreviousFile diffViewerNextHunk diffViewerPreviousHunk diffViewerToggleViewed`;
 export const scopes = Object.fromEntries([
   ['findInDirectory','application'],
+  ['saveFilePreview','editorSave'],['toggleFileEditorWordWrap','editor'],
   ['openDiffViewer','application'],...diff.split(' ').map(id=>[id,'diff']),
   ...['markdownZoomIn','markdownZoomOut','markdownZoomReset'].map(id=>[id,'markdown']),
   ['switchRightSidebarToFiles','application'],['fileExplorerOpenSelection','files'],['fileExplorerOpenSelectionFinderAlias','files'],
@@ -28,6 +29,8 @@ export function actionAvailable(id, context) {
     case 'nonBrowser': return (context.terminalFocus || context.markdownFocus || context.diffFocus) && !context.commandPaletteVisible;
     case 'palette': return context.commandPaletteVisible;
     case 'files': return context.fileExplorerFocus && !context.commandPaletteVisible;
+    case 'editorSave': return context.fileEditorEditable && !context.commandPaletteVisible;
+    case 'editor': return context.fileEditorFocus && !context.commandPaletteVisible;
     default: return false;
   }
 }

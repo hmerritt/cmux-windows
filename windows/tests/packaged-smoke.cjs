@@ -157,12 +157,30 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
       await delay(100);
     }
     assert(diffReady,'Packaged Git IPC and real diff pane must load');
+    await evaluate("document.querySelector('.diff-pane').focus()");
+    await call('Input.dispatchKeyEvent',{type:'keyDown',key:'F',code:'KeyF',windowsVirtualKeyCode:70,modifiers:10});
+    await call('Input.dispatchKeyEvent',{type:'keyUp',key:'F',code:'KeyF',windowsVirtualKeyCode:70,modifiers:10});
+    let searchReady=false;
+    for(let i=0;i<100;i++) {
+      searchReady=await evaluate("document.activeElement.matches('.workspace-search-input')");
+      if(searchReady)break;
+      await delay(100);
+    }
+    assert(searchReady,'Packaged directory-search shortcut must focus its input');
+    await call('Input.insertText',{text:'Packaged change'});
+    let matches=false;
+    for(let i=0;i<100;i++) {
+      matches=await evaluate("document.querySelector('.workspace-search-result')?.textContent.includes('Packaged change')");
+      if(matches)break;
+      await delay(100);
+    }
+    assert(matches,'Packaged directory search must execute ripgrep and render a real match');
     const screenshot=await call('Page.captureScreenshot',{format:'png'});
     fs.mkdirSync(path.resolve(__dirname,'../test-output'),{recursive:true});
     fs.writeFileSync(path.resolve(__dirname,'../test-output/packaged.png'),Buffer.from(screenshot.data,'base64'));
     await evaluate('window.cmuxNative.closeWindow()');
     await Promise.race([exited,delay(10000).then(()=>{throw new Error('Packaged app did not close');})]);
-    console.log('PASS packaged cmux.exe: ConPTY, WebGL, inline images, file IPC, keyboard split, Markdown, local images, Mermaid, Git diff, clean close');
+    console.log('PASS packaged cmux.exe: ConPTY, WebGL, inline images, file IPC, keyboard split, Markdown, local images, Mermaid, Git diff, directory search, clean close');
   } finally {
     socket?.close();
     if(child.exitCode===null) {

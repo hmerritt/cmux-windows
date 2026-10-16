@@ -96,6 +96,18 @@ test('document shortcuts preserve contextual zoom, diff scrolling and text input
   assert.equal(r.handle(event('v',{ctrlKey:false}),{diffFocus:true,textInputFocus:true},actionAvailable),null);
   assert.equal(r.handle(event('v',{ctrlKey:false}),diff,actionAvailable).id,'diffViewerToggleViewed');
 });
+test('file-editor actions stay scoped and save honors rebinds and unbinding',()=>{
+  const r=router(),editor={fileEditorFocus:true,fileEditorEditable:true,textInputFocus:true};
+  assert.equal(r.handle(event('s'),editor,actionAvailable).id,'saveFilePreview');
+  assert.equal(r.handle(event('z',{ctrlKey:false,altKey:true}),editor,actionAvailable).id,'toggleFileEditorWordWrap');
+  assert.equal(r.handle(event('s'),terminal,actionAvailable),null);
+  assert.equal(r.handle(event('s'),{fileEditorFocus:true,fileEditorEditable:false},actionAvailable),null);
+  r.configure({bindings:{saveFilePreview:'ctrl+alt+s'}});
+  assert.equal(r.handle(event('s'),editor,actionAvailable),null);
+  assert.equal(r.handle(event('s',{altKey:true}),editor,actionAvailable).id,'saveFilePreview');
+  r.configure({bindings:{saveFilePreview:null}});
+  assert.equal(r.handle(event('s'),editor,actionAvailable),null);
+});
 test('JSONC updates preserve unrelated settings/comments, reload edits and retain last good bindings on invalid input',()=>{
   const folder=fs.mkdtempSync(path.join(os.tmpdir(),'cmux-shortcut-config-')),file=path.join(folder,'cmux.json');
   try {

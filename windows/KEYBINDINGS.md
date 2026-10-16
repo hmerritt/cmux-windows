@@ -66,7 +66,7 @@ these terminal defaults are separate from cmux-owned action overrides.
 
 ## Availability
 
-All 169 registry actions are listed below; 116 currently have Windows handlers.
+All 169 registry actions are listed below; 119 currently have Windows handlers.
 Unavailable actions do not intercept keys. Remaining actions require features
 absent from this port, including Cloud/team integration, workspace groups/status
 and session reopening, the full right sidebar/files/text-box UI, canvas layout,
@@ -219,8 +219,8 @@ Windows UI translation completeness.
 | Toggle Right Sidebar (`toggleFileExplorer`) | `alt+ctrl+b` |  | Available |
 | File Explorer: Open Selection (`fileExplorerOpenSelection`) | `enter` |  | Available |
 | File Explorer: Open Selection (Finder Alias) (`fileExplorerOpenSelectionFinderAlias`) | `ctrl+down` |  | Available |
-| Save File Preview (`saveFilePreview`) | `ctrl+s` |  | Requires a feature not yet ported |
-| Toggle File Editor Word Wrap (`toggleFileEditorWordWrap`) | `alt+z` |  | Requires a feature not yet ported |
+| Save File Preview (`saveFilePreview`) | `ctrl+s` |  | Available |
+| Toggle File Editor Word Wrap (`toggleFileEditorWordWrap`) | `alt+z` |  | Available |
 | Open Browser (`openBrowser`) | `shift+ctrl+l` |  | Available |
 | Focus Address Bar (`focusBrowserAddressBar`) | `ctrl+l` |  | Available |
 | Back (`browserBack`) | `ctrl+[` |  | Available |

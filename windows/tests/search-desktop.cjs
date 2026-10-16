@@ -50,11 +50,17 @@ app.once('browser-window-created',(_event,win)=>win.webContents.once('did-finish
     assert(fs.readFileSync(path.join(root,'nested','[notes].txt'),'utf8').includes('rebound'));
     const reboundWrap=await evaluate("document.querySelector('.workspace-file-preview textarea').wrap");
     await key('w',['control','alt']);assert.notEqual(await evaluate("document.querySelector('.workspace-file-preview textarea').wrap"),reboundWrap);
+    await win.webContents.insertText(' menu');
+    win.webContents.send('cmux-command','shortcut.saveFilePreview');
+    await waitFor("document.querySelector('.workspace-file-preview [role=status]').textContent==='Saved'");
+    assert(fs.readFileSync(path.join(root,'nested','[notes].txt'),'utf8').includes(' menu'));
+    fs.mkdirSync(path.resolve(__dirname,'../test-output'),{recursive:true});
+    fs.writeFileSync(path.resolve(__dirname,'../test-output/search.png'),(await win.webContents.capturePage()).toPNG());
     win.webContents.send('cmux-command','shortcut.findInDirectory');
     await waitFor("document.activeElement.matches('.workspace-search-input')");
     await key('a',['control']);await win.webContents.insertText('absent');
     await waitFor("document.querySelectorAll('.workspace-search-result').length===0 && document.querySelector('.workspace-search-status').dataset.state==='ready'");
-    console.log('PASS directory search: contextual keyboard/menu action, smart case, nested literal filenames, result line selection, shared editing and no results');
+    console.log('PASS directory search: keyboard/menu actions, smart case, literal filenames, line selection, shared editing, configurable save/wrap and no results');
   }catch(error){failed=true;console.error(error.stack||error);console.error(await evaluate("JSON.stringify({focus:document.activeElement?.outerHTML,preview:document.querySelector('.workspace-file-preview')?.textContent,status:document.querySelector('.workspace-search-status')?.textContent})"));}
   finally{clearTimeout(deadline);win.destroy();app.quit();}
 }));

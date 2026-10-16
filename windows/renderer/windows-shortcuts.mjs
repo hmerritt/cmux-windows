@@ -1,4 +1,5 @@
 import {catalog,ShortcutRouter,parseBinding} from './shortcut-engine.mjs';
+import {workspaceFileEditorFor} from './file-editor.mjs';
 import {actionAvailable,actionPriority,scopes} from './shortcut-scopes.mjs';
 import {shortcutDialog,createShortcutSettings,shortcutText,actionLabel} from './shortcut-ui.mjs';
 export const menuActions = {
@@ -32,13 +33,14 @@ export function installWindowsShortcuts(e) {
   const guestId=()=>{try{return browser()?.getWebContentsId();}catch{return undefined;}};
   function context(target=document.activeElement) {
     const input=e.isFormEditableTarget(target);
+    const fileEditor=workspaceFileEditorFor(target);
     const current=panel();
     const sidebarFocus=Boolean(target?.closest?.('.sidebar,.inspector'));
     const markdownFocus=current?.type==='markdown' && (!input || Boolean(target?.closest?.('.document-find'))) && !sidebarFocus;
     const diffFocus=current?.type==='diff' && !sidebarFocus;
     const terminalFocus=!sidebarFocus && current?.type==='terminal' && (!input || Boolean(target?.closest?.('.terminal-search')));
     const browserFocus=!sidebarFocus && current?.type==='browser' && (!input || Boolean(target?.closest?.('.browser-bar')));
-    return {terminalFocus,browserFocus,markdownFocus,diffFocus,textInputFocus:input,sidebarFocus:Boolean(target?.closest?.('.sidebar,.inspector')),fileExplorerFocus:state.inspectorMode==='files' && Boolean(target?.closest?.('.workspace-file-tree')),commandPaletteVisible:state.paletteOpen,terminalAlternateScreen:terminal()?.term.buffer.active.type==='alternate',terminalCopyMode:Boolean(copyMode),dialogOpen:Boolean(state.activeDialog)||settings.isOpen(),appFocus:true};
+    return {terminalFocus,browserFocus,markdownFocus,diffFocus,fileEditorFocus:Boolean(fileEditor),fileEditorEditable:Boolean(fileEditor?.editable),textInputFocus:input,sidebarFocus:Boolean(target?.closest?.('.sidebar,.inspector')),fileExplorerFocus:state.inspectorMode==='files' && Boolean(target?.closest?.('.workspace-file-tree')),commandPaletteVisible:state.paletteOpen,terminalAlternateScreen:terminal()?.term.buffer.active.type==='alternate',terminalCopyMode:Boolean(copyMode),dialogOpen:Boolean(state.activeDialog)||settings.isOpen(),appFocus:true};
   }
   function focus(id) { if(id) return e.focusPanel(id); }
   function visiblePanels() {
@@ -216,6 +218,8 @@ export function installWindowsShortcuts(e) {
     focusRightSidebar:()=>{if(!state.inspectorMode)e.openWorkspaceFiles();else elements.inspector.querySelector('button,input')?.focus();},
     switchRightSidebarToFiles:e.openWorkspaceFiles,
     findInDirectory:e.openWorkspaceSearch,
+    saveFilePreview:()=>workspaceFileEditorFor(document.activeElement,{fallback:true})?.save(),
+    toggleFileEditorWordWrap:()=>workspaceFileEditorFor(document.activeElement,{fallback:true})?.toggleWordWrap(),
     fileExplorerOpenSelection:()=>e.workspaceFileExplorer.openSelection(),
     fileExplorerOpenSelectionFinderAlias:()=>e.workspaceFileExplorer.openSelection(),
     toggleFileExplorer:()=>{if(state.inspectorMode==='files')e.openInspector('files');else e.openWorkspaceFiles();},
