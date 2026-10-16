@@ -142,6 +142,25 @@ app.once('browser-window-created',(_event,win)=>{
       await waitFor("document.querySelectorAll('.pane-tab').length===3 && document.querySelectorAll('.pane').length===2");
       console.log('PASS restoration: dragged tabs and split structure survive renderer reload');
       console.log('PASS accessibility: keyboard tab navigation and native accessibility tree');
+      const sourceWorkspace=await evaluate("document.querySelector('.workspace-row.is-active').dataset.workspaceId");
+      await evaluate(`(async()=>{const token=new URL(location.href).searchParams.get('token');await fetch('/api/workspaces?token='+encodeURIComponent(token),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'Transfer destination'})});})()`);
+      await waitFor("document.getElementById('workspaceHeading').textContent==='Transfer destination'");
+      const destination=await evaluate("document.querySelector('.workspace-row.is-active').dataset.workspaceId");
+      await evaluate(`document.querySelector('[data-workspace-id="${sourceWorkspace}"].workspace-row').click()`);
+      await waitFor("document.querySelectorAll('.pane-tab').length===3");
+      const group=await evaluate("[...[...document.querySelectorAll('.pane-tab-strip')].find(s=>s.children.length===2).children].map(n=>n.dataset.tabPanelId)");
+      await drag(tab(group[0]),`.workspace-row[data-workspace-id="${destination}"]`,'center',true);
+      await waitFor("document.getElementById('workspaceHeading').textContent==='Transfer destination' && document.querySelectorAll('.pane-tab').length===3 && document.querySelectorAll('.pane').length===2");
+      assert.deepEqual(await evaluate(`Array.from(document.querySelector(${JSON.stringify(tab(group[0]))}).parentElement.children,n=>n.dataset.tabPanelId)`),group);
+      await evaluate(`document.querySelector('[data-workspace-id="${sourceWorkspace}"].workspace-row').click()`);
+      await waitFor("document.querySelectorAll('.pane-tab').length===1");
+      const remaining=await evaluate("document.querySelector('.pane-tab').dataset.tabPanelId");
+      await drag(tab(remaining),`.workspace-row[data-workspace-id="${destination}"]`);
+      await waitFor("document.getElementById('workspaceHeading').textContent==='Transfer destination' && document.querySelectorAll('.pane-tab').length===4 && document.querySelectorAll('.pane').length===3");
+      const transferredReload=new Promise(resolve=>win.webContents.once('did-finish-load',resolve));
+      win.webContents.reload();await transferredReload;
+      await waitFor("document.querySelectorAll('.pane-tab').length===4 && document.querySelectorAll('.pane').length===3");
+      console.log('PASS cross-workspace tab and group drops: process membership, split layout and reload');
       assert.deepEqual(rendererErrors,[],'Renderer must complete without errors');
     } catch(error) {failed=true;console.error(error.stack||error);console.error(await evaluate("({terminals:[...document.querySelectorAll('.xterm')].map(node=>node.textContent),images:document.querySelectorAll('.xterm-image-layer').length,focused:document.activeElement.className})"));}
     finally {clearTimeout(deadline);win.destroy();app.quit();}
