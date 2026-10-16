@@ -14,6 +14,7 @@ test('Markdown and diff panes retain their type, file path and workspace through
     const diff=runtime.createPanel(workspace.id,'diff',{cwd:dataDir,title:'Changes'});
     assert.equal(runtime.ensureTerminalProcess(markdown),null);assert.equal(runtime.ensureTerminalProcess(diff),null);
     assert(runtime.updatePanel(markdown.id,{filePath:'renamed/notes.md'}));
+    assert(runtime.updatePanel(diff.id,{diffSource:'branch',diffBase:'release/main'}));
     runtime.persistSession();
     const restored=createCmuxWindowsRuntime({dataDir});
     try {
@@ -21,6 +22,8 @@ test('Markdown and diff panes retain their type, file path and workspace through
       assert.equal(saved.panels.find(panel=>panel.id===markdown.id).type,'markdown');
       assert.equal(saved.panels.find(panel=>panel.id===markdown.id).filePath,'renamed/notes.md');
       assert.equal(saved.panels.find(panel=>panel.id===diff.id).type,'diff');
+      assert.equal(saved.panels.find(panel=>panel.id===diff.id).diffSource,'branch');
+      assert.equal(saved.panels.find(panel=>panel.id===diff.id).diffBase,'release/main');
       assert.equal(saved.activePanelId,diff.id);assert.equal(restored.terminals.size,0);
     }finally{restored.close();}
   }finally{runtime.close();fs.rmSync(dataDir,{recursive:true,force:true});}

@@ -824,6 +824,8 @@ class CmuxWindowsRuntime {
           backgroundImage: panel.type === "terminal" ? sanitizeBackgroundImageValue(panel.backgroundImage) : "",
           cwd: panel.cwd,
           filePath: panel.filePath || '',
+          diffSource: panel.diffSource || 'unstaged',
+          diffBase: panel.diffBase || '',
           shellProfile: panel.type === "terminal" ? sanitizeShellProfile(panel.shellProfile) : "",
           shellPath: panel.type === "terminal" ? sanitizeShellPath(panel.shellPath) : "",
           terminalFontSize: panel.type === "terminal" ? sanitizeTerminalFontSize(panel.terminalFontSize, 0) : 0,
@@ -868,6 +870,8 @@ class CmuxWindowsRuntime {
       backgroundImage: type === "terminal" ? sanitizeBackgroundImageValue(options.backgroundImage) : "",
       cwd: sanitizeDirectoryPath(options.cwd),
       filePath: type === 'markdown' ? String(options.filePath || '') : '',
+      diffSource: type==='diff' && ['staged','branch'].includes(options.diffSource)?options.diffSource:'unstaged',
+      diffBase: type==='diff'?String(options.diffBase || '').slice(0,1024):'',
       shellProfile: type === "terminal" ? sanitizeShellProfile(options.shellProfile) : "",
       shellPath: type === "terminal" ? sanitizeShellPath(options.shellPath) : "",
       terminalFontSize: type === "terminal" ? sanitizeTerminalFontSize(options.terminalFontSize, 0) : 0,
@@ -936,6 +940,8 @@ class CmuxWindowsRuntime {
       backgroundImage: panel.type === "terminal" ? sanitizeBackgroundImageValue(panel.backgroundImage) : "",
       cwd: panel.cwd,
       filePath: panel.filePath || '',
+      diffSource: panel.diffSource || 'unstaged',
+      diffBase: panel.diffBase || '',
       cwdShort: shortPath(panel.cwd),
       shellProfile: panel.shellProfile || "",
       shellPath: panel.shellPath || "",
@@ -1128,6 +1134,10 @@ class CmuxWindowsRuntime {
     }
     const found = this.findPanel(panelId);
     if (!found) return false;
+    if(found.panel.type==='diff') {
+      if(Object.hasOwn(updates,'diffSource'))found.panel.diffSource=['staged','branch'].includes(updates.diffSource)?updates.diffSource:'unstaged';
+      if(Object.hasOwn(updates,'diffBase'))found.panel.diffBase=String(updates.diffBase || '').slice(0,1024);
+    }
     if(Object.hasOwn(updates,'filePath') && found.panel.type==='markdown') {
       found.panel.filePath=String(updates.filePath || '');
       if(!found.panel.titleLocked)found.panel.title=path.basename(found.panel.filePath);

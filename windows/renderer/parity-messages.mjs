@@ -115,3 +115,16 @@ const diffDetailLabels={
   ja:['単語の差分','変更のない前後の行を展開','変更マーカー','バー','従来の記号','マーカーなし','全体の前後の行が表示上限を超えています。省略した前後の行を表示します。']
 };
 for(const [locale,values] of Object.entries(diffDetailLabels))for(const [index,key] of ['diffWordDiffs','diffExpandContext','diffIndicators','diffIndicatorBars','diffIndicatorClassic','diffIndicatorNone','diffContextLimit'].entries())messages[locale][key]=values[index];
+
+const diffSourceLabels={
+  en:['Diff source','Branch changes','Base branch or commit','Automatic base','Compare','Choose an existing branch or commit with shared history.','Unable to save the diff source.'],
+  de:['Änderungsquelle','Branch-Änderungen','Basis-Branch oder Commit','Automatische Basis','Vergleichen','Wählen Sie einen vorhandenen Branch oder Commit mit gemeinsamer Historie.','Die Änderungsquelle konnte nicht gespeichert werden.'],
+  fr:['Source des modifications','Modifications de la branche','Branche ou commit de base','Base automatique','Comparer','Choisissez une branche ou un commit existant ayant un historique commun.','Impossible d’enregistrer la source des modifications.'],
+  es:['Origen de los cambios','Cambios de la rama','Rama o confirmación base','Base automática','Comparar','Elige una rama o confirmación existente con historial compartido.','No se puede guardar el origen de los cambios.'],
+  ar:['مصدر الاختلافات','تغييرات الفرع','الفرع أو الالتزام الأساسي','أساس تلقائي','مقارنة','اختر فرعًا أو التزامًا موجودًا له سجل مشترك.','تعذر حفظ مصدر الاختلافات.'],
+  'zh-Hans':['差异来源','分支更改','基准分支或提交','自动选择基准','比较','请选择具有共同历史记录的现有分支或提交。','无法保存差异来源。'],
+  'zh-Hant':['差異來源','分支變更','基準分支或提交','自動選擇基準','比較','請選擇具有共同歷史記錄的現有分支或提交。','無法儲存差異來源。'],
+  ko:['차이 소스','브랜치 변경 사항','기준 브랜치 또는 커밋','자동 기준','비교','공통 기록이 있는 기존 브랜치 또는 커밋을 선택하세요.','차이 소스를 저장할 수 없습니다.'],
+  ja:['差分ソース','ブランチの変更','比較元のブランチまたはコミット','比較元を自動選択','比較','共通の履歴を持つ既存のブランチまたはコミットを選択してください。','差分ソースを保存できません。']
+};
+for(const [locale,values] of Object.entries(diffSourceLabels))for(const [index,key] of ['diffSource','diffBranchChanges','diffBase','diffAutomaticBase','diffCompare','diffBaseError','diffSourceSaveError'].entries())messages[locale][key]=values[index];

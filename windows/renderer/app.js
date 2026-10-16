@@ -6,7 +6,7 @@ import {createWorkspaceSearch} from './workspace-search.mjs';
 import {moveWorkspaceFileDrafts} from './file-editor.mjs';
 import {createDocumentPanes} from './document-panes.mjs';
 import {createDiffPanes} from './diff-panes.mjs';
-const diffPanes=createDiffPanes();
+const diffPanes=createDiffPanes({onSourceChange:(id,updates)=>api(`/api/panels/${id}`,{method:'PATCH',body:JSON.stringify(updates)})});
 const documentPanes=createDocumentPanes({openMarkdown:(root,filePath)=>openMarkdownDocument(root,filePath)});
 const workspaceFileExplorer=createWorkspaceFileExplorer({showMenu:showWorkspaceFileContextMenu,openMarkdown:(root,filePath)=>openMarkdownDocument(root,filePath),prompt:options=>showTextDialog(options),beforeRename:(root,oldPath,newPath)=>moveWorkspaceFileDrafts(root,oldPath,newPath,{validateOnly:true}),onRename:(root,oldPath,newPath)=>renameWorkspaceDocumentReferences(root,oldPath,newPath)});
 const workspaceSearch=createWorkspaceSearch();
@@ -4064,6 +4064,8 @@ function normalizeBlueprintPanel(panel = {}) {
     backgroundImage,
     cwd: String(panel.cwd || "").trim().slice(0, 512),
     filePath: type==='markdown'?String(panel.filePath || ''):'',
+    diffSource: type==='diff'?panel.diffSource:undefined,
+    diffBase: type==='diff'?panel.diffBase:undefined,
     shellProfile,
     shellPath: String(panel.shellPath || "").trim().slice(0, 512),
     terminalFontSize: type === "terminal" ? normalizeTerminalFontSize(panel.terminalFontSize, 0) : 0,
@@ -10513,6 +10515,8 @@ function appendPanelSignature(parts, panel = {}) {
   appendSignatureValue(parts, panel.terminalFontSize || 0);
   appendSignatureValue(parts, panel.url);
   appendSignatureValue(parts, panel.filePath || '');
+  appendSignatureValue(parts, panel.diffSource || '');
+  appendSignatureValue(parts, panel.diffBase || '');
   appendSignatureValue(parts, Boolean(panel.needsAttention));
   appendSignatureValue(parts, panel.notificationText || "");
   appendSignatureValue(parts, Boolean(panel.pending));
@@ -12337,6 +12341,8 @@ function paneRenderSignature(workspace, visiblePanels, tree) {
     appendSignatureValue(nextParts, panel.cwdShort || "");
     appendSignatureValue(nextParts, panel.url || "");
     appendSignatureValue(nextParts, panel.filePath || '');
+    appendSignatureValue(nextParts, panel.diffSource || '');
+    appendSignatureValue(nextParts, panel.diffBase || '');
     appendSignatureValue(nextParts, panel.shellProfile || "");
     appendSignatureValue(nextParts, panel.shellPath || "");
     appendSignatureValue(nextParts, terminalFontSizeForPanel(panel));
@@ -12361,6 +12367,7 @@ function paneStructureSignature(workspace, visiblePanels, tree) {
     appendSignatureValue(nextParts, panel.id);
     appendSignatureValue(nextParts, panel.type);
     if(panel.type==='markdown'){appendSignatureValue(nextParts,panel.cwd);appendSignatureValue(nextParts,panel.filePath);}
+    if(panel.type==='diff'){appendSignatureValue(nextParts,panel.cwd);appendSignatureValue(nextParts,panel.diffSource);appendSignatureValue(nextParts,panel.diffBase);}
     appendSignatureValue(nextParts, isPendingPanel(panel));
   });
   return parts.join("");
@@ -31424,6 +31431,8 @@ function paneLayoutPresetBlueprint(preset, options = {}) {
       backgroundImage: panel.backgroundImage || "",
       cwd: panel.cwd || workspace.cwd || "",
       filePath: panel.filePath || '',
+      diffSource: panel.diffSource,
+      diffBase: panel.diffBase,
       shellProfile: panel.shellProfile || state.settings.terminalProfile,
       shellPath: panel.shellPath || "",
       terminalFontSize: panel.terminalFontSize || 0,
@@ -37861,6 +37870,8 @@ function currentWorkspaceBlueprintSnapshot(label, overrides = {}) {
       backgroundImage: panel.backgroundImage || "",
       cwd: panel.cwd || workspace.cwd || "",
       filePath: panel.filePath || '',
+      diffSource: panel.diffSource,
+      diffBase: panel.diffBase,
       shellProfile: panel.shellProfile || state.settings.terminalProfile,
       shellPath: panel.shellPath || "",
       terminalFontSize: panel.terminalFontSize || 0,
@@ -37883,6 +37894,8 @@ function workspaceBlueprintComparableModel(blueprint) {
       backgroundImage: panel.backgroundImage || "",
       cwd: panel.cwd || "",
       filePath: panel.filePath || '',
+      diffSource: panel.diffSource,
+      diffBase: panel.diffBase,
       shellProfile: panel.shellProfile || "",
       shellPath: panel.shellPath || "",
       terminalFontSize: panel.terminalFontSize || 0,
@@ -38002,6 +38015,8 @@ async function applyWorkspaceBlueprint(blueprintId, workspaceId = activeWorkspac
         backgroundImage: panel.backgroundImage,
         cwd: panel.cwd || blueprint.cwd || workspace.cwd,
         filePath: panel.filePath,
+        diffSource: panel.diffSource,
+        diffBase: panel.diffBase,
         pending:!['markdown','diff'].includes(panel.type),
         shellProfile: panel.shellProfile,
         shellPath: panel.shellPath,
@@ -39389,7 +39404,7 @@ function splitPanelFromPaneId(panelId, direction, type = "terminal", options = {
 
 function duplicatePanel(panel) {
   if(['markdown','diff'].includes(panel.type)) {
-    splitPanel(panel,newPaneDirection(),panel.type,{cwd:panel.cwd,filePath:panel.filePath,title:panel.title,pending:false});return;
+    splitPanel(panel,newPaneDirection(),panel.type,{cwd:panel.cwd,filePath:panel.filePath,diffSource:panel.diffSource,diffBase:panel.diffBase,title:panel.title,pending:false});return;
   }
   if (panel.type === "browser") {
     splitPanel(panel, newPaneDirection(), "browser", {
@@ -42619,6 +42634,8 @@ async function createPanel(type, direction = newPaneDirection(), options = {}) {
           terminalFontSize: type === "terminal" ? options.terminalFontSize : undefined,
           cwd: options.cwd || workspace.cwd,
           filePath: options.filePath,
+          diffSource: options.diffSource,
+          diffBase: options.diffBase,
           url
         })
       });
@@ -43017,6 +43034,8 @@ function closedPanelSnapshot(panelId) {
     backgroundImage: found.panel.type === "terminal" ? found.panel.backgroundImage || "" : "",
     cwd: found.panel.cwd || found.workspace.cwd || "",
     filePath: found.panel.filePath || '',
+    diffSource: found.panel.diffSource,
+    diffBase: found.panel.diffBase,
     shellProfile: found.panel.shellProfile || state.settings.terminalProfile,
     shellPath: found.panel.shellPath || "",
     terminalFontSize: found.panel.terminalFontSize || 0,
@@ -43052,6 +43071,8 @@ async function reopenClosedPanel() {
       backgroundImage: snapshot.backgroundImage,
       cwd: snapshot.cwd || workspace.cwd,
       filePath: snapshot.filePath,
+      diffSource: snapshot.diffSource,
+      diffBase: snapshot.diffBase,
       pending:!['markdown','diff'].includes(snapshot.type),
       shellProfile: snapshot.shellProfile,
       shellPath: snapshot.shellPath,

@@ -26,6 +26,7 @@ It does not execute Apple SwiftUI or the macOS GhosttyKit binary.
 | File editor actions | Save and Word Wrap use the shared shortcut registry, including live rebinding/unbinding. Word wrap is persisted and reflows open editors. Desktop tests cover default/rebound keys and the canonical menu save action. |
 | Markdown panes | File-browser action opens a restored document pane with Preview/Text modes, live disk updates, shared editing, syntax highlighting, tables, local images, Mermaid diagrams, contextual zoom and find across formatted text. Shared upstream parser and sanitizer assets are shipped locally. |
 | Git diff panes | Canonical action opens a read-only viewer for staged, working, renamed and untracked changes. File search, file/hunk navigation, scrolling and persistent viewed marks work through contextual shortcuts. Git runs without shell interpolation, external diff drivers or text conversion; literal filenames and binary/large-file limits are tested. |
+| Diff sources | Each pane selects working, staged or branch changes and restores its source/base after reload or full runtime recreation. Working includes untracked files; staged isolates the index. Branch compares the merge base with the working tree, including committed changes, staged/unstaged edits, deletions and renames. Manual branch/commit bases are validated; defaults prefer a recorded creation base, an integration upstream, then origin/default/main/master candidates. Own-branch tracking refs are skipped. Viewed marks are scoped by source and branch base. |
 | Diff display preferences | Unified and split layouts retain real old/new line numbers, unequal replacement blocks and missing-newline markers. Word wrap, word-level highlights, line numbers, change backgrounds, bars/classic/no indicators and expanded unchanged context update live across panes and survive reload. Context reads stay bounded, preserve viewed-file identity and reject concurrent changes; oversized full context shows a visible compact-context notice. A shared JSON preference file uses the native schema and `CMUX_DIFF_VIEWER_PREFS_PATH` override; writes merge serially and replace atomically. |
 | Settings search | Rapid native text insertion and Escape-to-clear retain the controlled query without resetting typed text. |
 | New UI translations | Rendering-engine and file-browser copy supplied in all nine supported locales; tests check locale selection and missing strings. |
@@ -59,10 +60,19 @@ $env:CMUX_TEST_BINARY = "$PWD/release-parity/win-unpacked/cmux.exe"
 npm run test:packaged
 ```
 
+Diff-source regressions were committed failing in `3bdb22d247`: staged status
+incorrectly included working-only files and the desktop lacked a source picker.
+The same `node --test tests/workspace-git.test.cjs` and `npm run test:documents`
+commands pass with source filtering and the picker. Source tests cover divergent
+branch histories, rename/delete patches, own-branch upstream exclusion, invalid
+and unrelated bases, source-scoped viewed marks and persisted pane settings.
+The desktop suite also passes at 150% scaling; packaged tests exercise staged
+and branch sources through the shipped IPC and renderer.
+
 The original tab-drag regression was committed failing in `8675e3060d`;
 cross-workspace drops were committed failing in `1165162f6e`. The same
 `npm run test:parity` command passes with both implementations. Unit/model tests
-cover 33 behaviors. File-editing regression `3cf324a876` fails with
+cover 34 behaviors. File-editing regression `3cf324a876` fails with
 `node --test tests/workspace-files.test.cjs`; the same command passes with the
 editor implementation. Desktop tests use isolated profiles and private pipes.
 Markdown regression `8918250cad` and Git-viewer regression `e38392c05f`
@@ -110,7 +120,8 @@ They do not replace or stop an already running user build.
   files up to 1 MB. File moves, multiple selection, complete explorer menus and the other
   macOS right-sidebar tools remain. Paired macOS visual comparison of the dock
   remains. Markdown math/Vega and exhaustive rendering parity remain. Git diff
-  branch/patch/last-turn sources, review comments, syntax highlighting, generated-file
+  patch/last-turn sources, PR-aware base suggestions, the native ref picker,
+  review comments, syntax highlighting, generated-file
   handling and the complete macOS diff presentation remain. The audited
   native diff viewer exposes staged/unstaged viewing; no index-mutating stage or
   unstage action was found, so the earlier staging gap was an unsupported assumption.

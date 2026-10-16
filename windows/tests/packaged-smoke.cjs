@@ -168,6 +168,26 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     assert(splitReady,'Packaged split diff layout and line numbers must render');
     assert.equal(JSON.parse(fs.readFileSync(path.join(profile,'cmux','diff-viewer','preferences.json'),'utf8')).layout,'split');
 
+    git('branch','packaged-base','HEAD');
+    fs.writeFileSync(path.join(documentRoot,'branch.txt'),'packaged branch content\n');git('add','branch.txt');git('commit','-m','Packaged branch fixture');
+    git('add','notes.md');fs.appendFileSync(path.join(documentRoot,'notes.md'),'Packaged working content\n');
+    await evaluate("{const source=document.querySelector('[data-diff-source]');source.value='staged';source.dispatchEvent(new Event('change',{bubbles:true}));}");
+    let stagedReady=false;
+    for(let i=0;i<100;i++) {
+      stagedReady=await evaluate("document.querySelector('[data-diff-source]')?.value==='staged' && document.querySelector('.diff-patch')?.textContent.includes('Packaged change') && !document.querySelector('.diff-patch').textContent.includes('Packaged working content')");
+      if(stagedReady)break;await delay(100);
+    }
+    assert(stagedReady,'Packaged staged source excludes working changes');
+    await evaluate("{const source=document.querySelector('[data-diff-source]');source.value='branch';source.dispatchEvent(new Event('change',{bubbles:true}));}");
+    for(let i=0;i<100;i++){if(await evaluate("document.querySelector('[data-diff-compare]').disabled===false && document.querySelector('[data-diff-base]').hidden===false"))break;await delay(100);}
+    await evaluate("document.querySelector('[data-diff-base]').value='packaged-base';document.querySelector('[data-diff-compare]').click()");
+    let branchReady=false;
+    for(let i=0;i<100;i++) {
+      branchReady=await evaluate("document.querySelector('.diff-base-status').textContent.includes('packaged-base') && !!document.querySelector('[data-git-path=\"branch.txt\"]') && document.querySelector('.diff-patch').textContent.includes('packaged branch content')");
+      if(branchReady)break;await delay(100);
+    }
+    assert(branchReady,'Packaged branch source includes committed changes from the selected merge base');
+
     await evaluate("document.querySelector('.diff-pane').focus()");
     await call('Input.dispatchKeyEvent',{type:'keyDown',key:'F',code:'KeyF',windowsVirtualKeyCode:70,modifiers:10});
     await call('Input.dispatchKeyEvent',{type:'keyUp',key:'F',code:'KeyF',windowsVirtualKeyCode:70,modifiers:10});

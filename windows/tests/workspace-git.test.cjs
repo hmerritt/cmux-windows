@@ -86,7 +86,7 @@ test('diff sources isolate index and worktree and compare branches from the merg
   const git=(...args)=>execFileSync('git',['-C',root,...args],{windowsHide:true,stdio:'pipe'}).toString();
   try {
     git('init','-b','main');git('config','user.name','Test');git('config','user.email','test@example.invalid');
-    for(const name of ['both.txt','index.txt','work.txt','gone.txt','old.txt'])await fs.writeFile(path.join(root,name),'original\n');
+    for(const name of ['both.txt','index.txt','work.txt','gone.txt','old.txt'])await fs.writeFile(path.join(root,name),name==='old.txt'?'rename original\n':'original\n');
     git('add','.');git('commit','-m','Base');const base=git('rev-parse','HEAD').trim();
     git('checkout','-b','feature');
     await fs.writeFile(path.join(root,'committed.txt'),'feature commit\n');
@@ -115,6 +115,14 @@ test('diff sources isolate index and worktree and compare branches from the merg
     assert.equal((await viewer.diff(root,'both.txt',{source:'branch',base:'main',expandUnchanged:true})).revision,branchPatch.revision);
     assert.equal((await viewer.status(root,{source:'branch'})).baseRef,'main');
     git('config','branch.feature.cmuxBase',base);assert.equal((await viewer.status(root,{source:'branch'})).baseRef,base);
+    git('config','--unset','branch.feature.cmuxBase');git('update-ref','refs/remotes/origin/feature','HEAD');
+    git('config','remote.origin.url','.');git('config','remote.origin.fetch','+refs/heads/*:refs/remotes/origin/*');
+    git('config','branch.feature.remote','origin');git('config','branch.feature.merge','refs/heads/feature');
+    assert.equal((await viewer.status(root,{source:'branch'})).baseRef,'main','An own-branch tracking ref must not hide pushed commits');
+    git('update-ref','refs/remotes/origin/integration',base);git('config','branch.feature.merge','refs/heads/integration');
+    assert.equal((await viewer.status(root,{source:'branch'})).baseRef,'origin/integration');
+    const unrelated=git('commit-tree','HEAD^{tree}','-m','Unrelated').trim();
+    await assert.rejects(viewer.status(root,{source:'branch',base:unrelated}),/unrelated_base/);
     await assert.rejects(viewer.status(root,{source:'branch',base:'--output=escape'}),/invalid_base/);
     await assert.rejects(viewer.status(root,{source:'branch',base:'missing'}),/invalid_base/);
     await assert.rejects(viewer.status(root,{source:'unsupported'}),/invalid_source/);

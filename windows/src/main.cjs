@@ -755,8 +755,8 @@ if (!hasLock) {
       return {ok:true,preferences};
     }catch{return {ok:false,error:'preferences_error'};}
   },null));
-  ipcMain.handle('git:status',trustedIpcHandler(async(_event,root)=>{
-    try{return {ok:true,...await workspaceGit.status(root)};}catch(error){return {ok:false,error:error.message};}
+  ipcMain.handle('git:status',trustedIpcHandler(async(_event,root,options)=>{
+    try{return {ok:true,...await workspaceGit.status(root,options)};}catch(error){return {ok:false,error:error.message};}
   },null));
   ipcMain.handle('git:diff',trustedIpcHandler(async(_event,root,filePath,options)=>{
     try{return {ok:true,...await workspaceGit.diff(root,filePath,options)};}catch(error){return {ok:false,error:error.message};}
