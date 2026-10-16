@@ -62,13 +62,15 @@ The runtime listens on `\\.\pipe\cmux-windows` on Windows and falls back to a te
 Implemented in this milestone:
 
 - Windows desktop shell with workspace sidebar, surface tabs, split panes, and command palette for commands, workspaces, panes, and Settings categories.
-- Terminal panes backed by Windows ConPTY, using node-pty's bundled ConPTY DLL.
+- Terminal panes backed by Windows ConPTY, using node-pty's bundled ConPTY DLL. Settings > Terminal offers an optional WebGL renderer; SIXEL and iTerm inline images are supported.
 - Browser panes through Electron `webview`, with iframe fallback outside Electron.
 - Named-pipe CLI/control protocol.
 - Native Windows window controls, draggable split dividers, terminal font-size controls, restart, and close-to-empty workspace home state.
 - Settings panel split into Quick, Workspace, Look, Browser, Layout, Terminal, and Data pages, with tokenized cross-page search, one-click setup presets, expanded themes/accent palettes, custom accent/workspace colors, workspace names/colors, terminal background/text/cursor colors, built-in/URL/local-file backgrounds, browser home page, import/export/reset, density, compact/standard/expanded toolbar modes, sidebar width, tabs/status bar visibility, performance mode, terminal font family, text size, line height, padding, cursor style/blink, default shell profile, and terminal scrollback.
 - Compact Tools menu for workspace/session actions so the default top bar stays simple.
-- Terminal tabs within each split, with new-tab buttons, keyboard navigation, switching without terminating the hidden process, and close-to-surviving-tab behavior. Tab groups and nested split layout survive a desktop restart.
+- Terminal tabs within each split, with keyboard navigation, drag reordering, moving tabs between splits, Shift-dragging whole groups and edge drops to create splits. Hidden processes survive tab switches. Tab groups and nested split layout survive a desktop restart.
+- Workspace file browser with keyboard navigation and read-only UTF-8 previews, restricted to files within the workspace.
+- Named accessible tabs, focus containment for dialogs and the palette, and terminal screen-reader support that follows the OS accessibility setting.
 - Browser panes with address/search normalization, back/forward/reload/home controls, open-external fallback, and configurable home page.
 - Workspace right-click menus for focus, rename, color, new terminal/browser, new workspace, and close actions.
 - Pane drag/drop docking hints for left, right, top, and bottom terminal placement, active-pane focus mode, percent-based active-pane resizing from Settings/Tools, and optimistic workspace/tab updates so moves, closes, and focus changes feel immediate.
@@ -96,6 +98,7 @@ npm ci
 npm run build:renderer
 npm test
 npm run test:shortcuts
+npm run test:parity
 npm run smoke
 npm run test:desktop
 npm run pack:win
@@ -114,4 +117,5 @@ Remove-Item Env:CMUX_TEST_DEVICE_SCALE
 
 `npm run build:locales` exports matching translations from the existing Apple app
 catalogs. Windows-specific copy that has no shared translation still uses English.
-The catalog export deliberately excludes ambiguous English matches.
+The catalog export deliberately excludes ambiguous English matches. New renderer
+and file-browser copy has its own nine-locale catalog.

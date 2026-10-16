@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import { formatMessage, t } from "../../i18n.js";
 
 const labelKeys = {
@@ -151,15 +151,11 @@ export function SettingsShell({
   const searchInputRef = useRef(null);
   const searchWasClearedRef = useRef(false);
   const tabsRef = useRef(null);
-  const [draftQuery, setDraftQuery] = useState(query || "");
+  const draftQuery=query || '';
 
   useEffect(() => {
     if (focusSearchOnMount) searchInputRef.current?.focus({ preventScroll: true });
   }, [focusSearchOnMount]);
-
-  useEffect(() => {
-    setDraftQuery(query || "");
-  }, [query]);
 
   useEffect(() => {
     if (!searchWasClearedRef.current || query) return;
@@ -203,7 +199,6 @@ export function SettingsShell({
   };
 
   const changeSearch = (nextQuery) => {
-    setDraftQuery(nextQuery);
     onQuery(nextQuery);
   };
 
@@ -215,7 +210,6 @@ export function SettingsShell({
   const clearSearch = () => {
     if (!draftQuery) return;
     searchWasClearedRef.current = true;
-    setDraftQuery("");
     onClear();
   };
 

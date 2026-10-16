@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws:; img-src 'self' data: https: file:; frame-src http: https:; child-src http: https:;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws:; img-src 'self' data: https: file:; frame-src http: https:; child-src http: https:;">
     <title>cmux</title>
     <link rel="stylesheet" href="/vendor/xterm.css">
     <link rel="stylesheet" href="/styles.css">
@@ -136,6 +136,8 @@
     <script src="/vendor/addon-fit.js"></script>
     <script src="/vendor/addon-web-links.js"></script>
     <script src="/vendor/addon-search.js"></script>
+    <script src="/vendor/addon-image.js"></script>
+    <script src="/vendor/addon-webgl.js"></script>
     <script src="/dist/settings-ui.js"></script>
     <script type="module" src="/app.js"></script>
   </body>

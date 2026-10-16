@@ -10,8 +10,10 @@ process.env.CMUX_WINDOWS_PIPE=`\\\\.\\pipe\\cmux-parity-${process.pid}`;
 app.setPath('userData',path.join(profile,'electron'));
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let failed=false;
+const rendererErrors=[];
 const deadline=setTimeout(()=>{console.error('Parity test timed out');app.exit(1);},90000);
 app.once('browser-window-created',(_event,win)=>{
+  win.webContents.on('console-message',details=>{if(details.level==='error')rendererErrors.push(details.message);});
   win.webContents.once('did-finish-load',async()=>{
     const evaluate=expression=>win.webContents.executeJavaScript(expression);
     async function waitFor(expression) {
@@ -40,6 +42,8 @@ app.once('browser-window-created',(_event,win)=>{
     try {
       win.setSize(1280,800);win.focus();win.webContents.focus();
       await waitFor("document.querySelector('.xterm-helper-textarea') !== null");
+      await evaluate(`(async()=>{const token=new URL(location.href).searchParams.get('token');await fetch('/api/workspaces?token='+encodeURIComponent(token),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'Parity verification',cwd:${JSON.stringify(path.resolve(__dirname,'../..'))}})});})()`);
+      await waitFor("document.getElementById('workspaceHeading').textContent==='Parity verification' && document.querySelector('.xterm-helper-textarea') !== null");
       await evaluate("document.querySelector('.xterm-helper-textarea').focus()");
       await key('d',['control']);
       await waitFor("document.querySelectorAll('.pane').length===2");
@@ -63,15 +67,83 @@ app.once('browser-window-created',(_event,win)=>{
       await evaluate(`document.querySelector(${JSON.stringify(tab(ids[0]))}).focus()`);
       await key('Home');
       await waitFor("document.activeElement.matches('.pane-tab[aria-selected=true]')");
-      const a11y=await win.webContents.debugger.attach('1.3');
+      assert(await evaluate("[...document.querySelectorAll('.pane-tab')].every(tab=>document.getElementById(tab.getAttribute('aria-controls')))"),'Every tab references its split content');
+      await win.webContents.debugger.attach('1.3');
       const tree=await win.webContents.debugger.sendCommand('Accessibility.getFullAXTree');
       assert(tree.nodes.some(node=>node.role?.value==='tablist' && node.name?.value),'Split tab lists have accessible names');
       assert(tree.nodes.some(node=>node.role?.value==='tabpanel'),'Visible pane content is exposed as tabpanel');
       win.webContents.debugger.detach();
+      app.setAccessibilitySupportEnabled(false);
+      await waitFor("document.querySelector('.xterm-accessibility') === null");
+      const renderer=await evaluate("document.querySelector('.terminal-host').dataset.renderer");
+      assert(['webgl','dom'].includes(renderer));
+      win.focus();win.webContents.focus();
+      await evaluate("document.querySelector('.xterm-helper-textarea').focus()");
+      await delay(250);
+      await waitFor("document.querySelector('.xterm').textContent.includes('❯') || document.querySelector('.xterm').textContent.includes('>')");
+      await win.webContents.insertText("Write-Output ('CMUX_UNICODE_' + '日本語 café é 👩‍💻')");
+      await key('Enter');
+      await waitFor("document.querySelector('.xterm').textContent.includes('CMUX_UNICODE_日本語 café')");
+      await key(',',['control']);
+      await waitFor("document.querySelector('[data-settings-category=terminal]') !== null");
+      await evaluate("document.querySelector('[data-settings-category=terminal]').click()");
+      await waitFor("document.querySelector('[data-setting-control=terminalRenderer]') !== null");
+      await evaluate("document.querySelector('.settings-search-input').focus()");
+      await win.webContents.insertText('font family');
+      await waitFor("document.querySelector('.settings-search-input').value==='font family'");
+      await key('Escape');
+      await waitFor("document.querySelector('.settings-search-input').value===''");
+      await evaluate("const select=document.querySelector('[data-setting-control=terminalRenderer]');select.value='webgl';select.dispatchEvent(new Event('change'));document.getElementById('closeInspectorButton').click();document.querySelector('.xterm-helper-textarea').focus()");
+      await waitFor("document.querySelector('.terminal-host').dataset.renderer==='webgl'");
+      await delay(200);
+      const imagePath=path.resolve(__dirname,'../src/assets/cmux.png').replaceAll("'","''");
+      async function shell(command) {
+        await evaluate(`(async()=>{const token=new URL(location.href).searchParams.get('token');const response=await fetch('/api/input?token='+encodeURIComponent(token),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:${JSON.stringify(command+'\r')}})});if(!response.ok)throw Error('Terminal input failed');})()`);
+      }
+      await shell(`$image=[IO.File]::ReadAllBytes('${imagePath}'); [Console]::Write(([char]27)+']1337;File=inline=1;width=32px;height=32px;size='+$image.Length+':'+[Convert]::ToBase64String($image)+[char]7)`);
+      const imagePixels="[...document.querySelectorAll('.xterm-image-layer')].reduce((total,canvas)=>total+canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data.filter((value,index)=>index%4===3 && value>0).length,0)";
+      await waitFor(`(${imagePixels})>0`);
+      await delay(250);
+      await shell("[Console]::Write(([char]27)+'Pq\"1;1;32;6#0;2;100;0;0#0!32~'+[char]27+'\\')");
+      await waitFor("[...document.querySelectorAll('.xterm-image-layer')].some(canvas=>{const pixels=canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data;for(let i=0;i<pixels.length;i+=4)if(pixels[i]===255 && pixels[i+1]===0 && pixels[i+2]===0 && pixels[i+3]===255)return true;return false;})");
+      app.setAccessibilitySupportEnabled(true);await delay(300);
+      app.setAccessibilitySupportEnabled(true);
+      await waitFor("document.querySelector('.xterm-accessibility') !== null");
+      console.log('PASS terminal: WebGL rendering, Unicode input/output, inline image pixels and live screen-reader support');
+      win.webContents.send('cmux-command','shortcut.switchRightSidebarToFiles');
+      await waitFor("document.querySelector('[data-file-path=\"CLAUDE.md\"]') !== null");
+      await waitFor("document.activeElement.matches('[role=treeitem]')");
+      await evaluate("document.querySelector('[data-file-path=\"CLAUDE.md\"]').focus()");
+      await key('Enter');
+      await waitFor("document.querySelector('.workspace-file-preview textarea')?.value.startsWith('# cmux agent notes')");
+      assert.equal(await evaluate("document.querySelector('.workspace-file-preview textarea').readOnly"),true);
+      console.log('PASS file explorer: workspace directory, canonical keyboard action and safe text preview');
+      await evaluate("document.getElementById('closeInspectorButton').click()");
+      await key('p',['control','shift']);
+      await waitFor("document.getElementById('paletteInput').getAttribute('aria-activedescendant') !== null");
+      await key('Tab');
+      assert(await evaluate("document.getElementById('palette').contains(document.activeElement)"),'Palette keeps keyboard focus');
+      await key('Escape');
+      assert(await evaluate("!document.getElementById('shell').inert"),'Closing palette restores background interaction');
+      app.setAccessibilitySupportEnabled(false);
+      await evaluate("document.querySelector('.xterm-helper-textarea').focus()");
+      await key('r',['control']);
+      await waitFor("document.querySelector('.app-dialog input') !== null");
+      assert(await evaluate("document.querySelector('.app-dialog').getAttribute('aria-labelledby') !== null"));
+      await key('Tab',['shift']);
+      assert(await evaluate("document.activeElement.classList.contains('dialog-confirm')"),'Shift+Tab wraps within the dialog');
+      await key('Escape');
+      assert(await evaluate("!document.getElementById('shell').inert"),'Closing dialog restores background interaction');
+      await delay(300);
       fs.mkdirSync(path.join(__dirname,'../test-output'),{recursive:true});
       fs.writeFileSync(path.join(__dirname,'../test-output/parity.png'),(await win.webContents.capturePage()).toPNG());
+      const reloaded=new Promise(resolve=>win.webContents.once('did-finish-load',resolve));
+      win.webContents.reload();await reloaded;
+      await waitFor("document.querySelectorAll('.pane-tab').length===3 && document.querySelectorAll('.pane').length===2");
+      console.log('PASS restoration: dragged tabs and split structure survive renderer reload');
       console.log('PASS accessibility: keyboard tab navigation and native accessibility tree');
-    } catch(error) {failed=true;console.error(error.stack||error);}
+      assert.deepEqual(rendererErrors,[],'Renderer must complete without errors');
+    } catch(error) {failed=true;console.error(error.stack||error);console.error(await evaluate("({terminals:[...document.querySelectorAll('.xterm')].map(node=>node.textContent),images:document.querySelectorAll('.xterm-image-layer').length,focused:document.activeElement.className})"));}
     finally {clearTimeout(deadline);win.destroy();app.quit();}
   });
 });

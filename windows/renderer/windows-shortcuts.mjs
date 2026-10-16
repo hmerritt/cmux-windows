@@ -36,7 +36,7 @@ export function installWindowsShortcuts(e) {
     const sidebarFocus=Boolean(target?.closest?.('.sidebar,.inspector'));
     const terminalFocus=!sidebarFocus && current?.type==='terminal' && (!input || Boolean(target?.closest?.('.terminal-search')));
     const browserFocus=!sidebarFocus && current?.type==='browser' && (!input || Boolean(target?.closest?.('.browser-bar')));
-    return {terminalFocus,browserFocus,textInputFocus:input,sidebarFocus:Boolean(target?.closest?.('.sidebar,.inspector')),commandPaletteVisible:state.paletteOpen,terminalAlternateScreen:terminal()?.term.buffer.active.type==='alternate',terminalCopyMode:Boolean(copyMode),dialogOpen:Boolean(state.activeDialog)||settings.isOpen(),appFocus:true};
+    return {terminalFocus,browserFocus,textInputFocus:input,sidebarFocus:Boolean(target?.closest?.('.sidebar,.inspector')),fileExplorerFocus:state.inspectorMode==='files' && Boolean(target?.closest?.('.workspace-file-tree')),commandPaletteVisible:state.paletteOpen,terminalAlternateScreen:terminal()?.term.buffer.active.type==='alternate',terminalCopyMode:Boolean(copyMode),dialogOpen:Boolean(state.activeDialog)||settings.isOpen(),appFocus:true};
   }
   function focus(id) { if(id) return e.focusPanel(id); }
   function visiblePanels() {
@@ -85,20 +85,14 @@ export function installWindowsShortcuts(e) {
     const group=e.paneTabGroups.groupFor(panel()?.id); if(!group)return;
     const index=group.members.indexOf(panel().id),next=index+delta;
     if(next<0 || next>=group.members.length)return;
-    [group.members[index],group.members[next]]=[group.members[next],group.members[index]];
-    e.paneTabGroups.save();e.render();
+    e.paneTabGroups.reorder(panel().id,group.members[next],delta>0);e.render();
   }
   function moveTab(direction) {
     const panels=visiblePanels(),current=panel();
     const index=panels.findIndex(p=>p.id===current?.id);
     const target=['next','previous'].includes(direction)?panels[(index+(direction==='next'?1:-1)+panels.length)%panels.length]?.id:neighbor(direction);
     if(!target || target===current?.id)return;
-    let tree=e.paneTreeForWorkspace(e.activeWorkspace());
-    const replacement=e.paneTabGroups.replacementForRemoval(current.id);
-    tree=replacement?e.replacePaneTreePanelId(tree,current.id,replacement):e.removePanelFromPaneTree(tree,current.id);
-    e.paneTabGroups.add(e.activeWorkspace().id,target,current.id);
-    e.state.paneTrees.set(e.activeWorkspace().id,e.paneTabGroups.remapTree(tree));
-    e.savePaneTreeLayouts(state.paneTrees);e.render();focus(current.id);
+    e.transferPaneTabs(current.id,target);
   }
   function moveWorkspace(delta) {
     const workspaces=state.data?.workspaces||[],index=workspaces.findIndex(w=>w.id===e.activeWorkspace()?.id);
@@ -213,8 +207,11 @@ export function installWindowsShortcuts(e) {
     increaseWorkspaceTerminalFontSize:()=>e.activeWorkspace()?.panels.filter(p=>p.type==='terminal').forEach(p=>e.changePaneTerminalFontSize(p.id,1,{toast:false})),
     decreaseWorkspaceTerminalFontSize:()=>e.activeWorkspace()?.panels.filter(p=>p.type==='terminal').forEach(p=>e.changePaneTerminalFontSize(p.id,-1,{toast:false})),
     resetWorkspaceTerminalFontSize:()=>e.activeWorkspace()?.panels.filter(p=>p.type==='terminal').forEach(p=>e.resetPaneTerminalFontSize(p.id,{toast:false})),
-    focusRightSidebar:()=>{if(!state.inspectorMode)e.openInspector('notifications');elements.inspector.querySelector('button,input')?.focus();},
-    toggleFileExplorer:()=>e.openInspector(state.inspectorMode || 'notifications'),
+    focusRightSidebar:()=>{if(!state.inspectorMode)e.openWorkspaceFiles();else elements.inspector.querySelector('button,input')?.focus();},
+    switchRightSidebarToFiles:e.openWorkspaceFiles,
+    fileExplorerOpenSelection:()=>e.workspaceFileExplorer.openSelection(),
+    fileExplorerOpenSelectionFinderAlias:()=>e.workspaceFileExplorer.openSelection(),
+    toggleFileExplorer:()=>{if(state.inspectorMode==='files')e.openInspector('files');else e.openWorkspaceFiles();},
     openBrowser:e.openBrowserHome,
     focusBrowserAddressBar:()=>e.focusBrowserAddress(panel()),
     browserBack:()=>e.navigateBrowserHistory(-1,panel()),browserForward:()=>e.navigateBrowserHistory(1,panel()),

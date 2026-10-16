@@ -145,6 +145,10 @@ body { font-size: 13px; }
 .pane-tab:hover .pane-tab-close, .pane-tab:focus-within .pane-tab-close { opacity: 1; }
 .pane-tab-close:hover { background: #ffffff16; border-radius: 3px; }
 .pane-tab:focus-visible { outline: 1px solid #0a84ff; outline-offset: -2px; }
+.pane-tab.is-dragging { opacity: .5; }
+.pane-tab-drag-active webview { pointer-events:none; }
+.pane-tab.is-drop-before { box-shadow: inset 2px 0 #0a84ff; }
+.pane-tab.is-drop-after { box-shadow: inset -2px 0 #0a84ff; }
 #paneGrid .pane-new-tab { font: 20px/20px var(--font-ui); }
 #paneGrid .pane-title { grid-column: 2; grid-row: 1; }
 #paneGrid .pane-toolbar { grid-column: 3; grid-row: 1; opacity: 1; pointer-events: auto; transform: none; max-inline-size: none; gap: 2px; }
@@ -160,3 +164,12 @@ body { font-size: 13px; }
 .shell .pane-grid { background: #181916; }
 .shell .pane-splitter { flex-basis: 1px; background: #181916; }
 .shell.focus-mode .pane { grid-template-rows: minmax(0, 1fr); }
+.workspace-files-toolbar { display:flex; gap:6px; padding:8px 0; }
+.workspace-files-toolbar button,.workspace-file-preview button { background:#ffffff0a; border:1px solid #ffffff20; color:inherit; border-radius:4px; padding:4px 8px; }
+.workspace-files-path { font:11px var(--font-ui); overflow-wrap:anywhere; color:#aaa; margin-bottom:8px; }
+.workspace-file-tree { display:flex; flex-direction:column; }
+.workspace-file-tree button { text-align:start; color:inherit; font:12px var(--font-ui); border:0; background:transparent; padding:4px 8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.workspace-file-tree button[aria-selected=true] { background:#0a84ff30; }
+.workspace-file-tree button:focus-visible { outline:1px solid #0a84ff; outline-offset:-1px; }
+.workspace-file-preview { display:grid; gap:8px; margin-top:12px; }
+.workspace-file-preview textarea { width:100%; min-height:300px; resize:vertical; background:#181916; color:#ddd; font:12px/1.5 var(--font-mono,monospace); border:1px solid #ffffff20; padding:8px; }

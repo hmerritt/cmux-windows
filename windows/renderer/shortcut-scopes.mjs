@@ -4,6 +4,7 @@ const application = `openSettings reloadConfiguration newWindow closeWindow togg
 const terminal = `toggleTerminalCopyMode sendCtrlFToTerminal sizeTerminalToMyWindow clearScreenKeepScrollback increaseWorkspaceTerminalFontSize decreaseWorkspaceTerminalFontSize resetWorkspaceTerminalFontSize useSelectionForFind`;
 const browser = `focusBrowserAddressBar browserBack browserForward browserReload browserHardReload browserZoomIn browserZoomOut browserZoomReset toggleBrowserDeveloperTools showBrowserJavaScriptConsole toggleBrowserFocusMode toggleBrowserDesignMode`;
 export const scopes = Object.fromEntries([
+  ['switchRightSidebarToFiles','application'],['fileExplorerOpenSelection','files'],['fileExplorerOpenSelectionFinderAlias','files'],
   ...application.split(' ').map(id=>[id,'application']),
   ...terminal.split(' ').map(id=>[id,'terminal']),
   ...browser.split(' ').map(id=>[id,'browser']),
@@ -20,6 +21,7 @@ export function actionAvailable(id, context) {
     case 'surface': return (context.browserFocus || context.terminalFocus) && !context.commandPaletteVisible;
     case 'nonBrowser': return context.terminalFocus && !context.commandPaletteVisible;
     case 'palette': return context.commandPaletteVisible;
+    case 'files': return context.fileExplorerFocus && !context.commandPaletteVisible;
     default: return false;
   }
 }

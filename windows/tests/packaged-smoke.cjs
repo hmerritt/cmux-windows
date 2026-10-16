@@ -76,6 +76,9 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
       await delay(100);
     }
     assert(loaded,'Packaged renderer must finish loading');
+    assert(await evaluate("typeof ImageAddon?.ImageAddon==='function' && typeof WebglAddon?.WebglAddon==='function'"),'Packaged renderer must load both terminal addons');
+    const files=await evaluate(`window.cmuxNative.listWorkspaceFiles(${JSON.stringify(path.resolve(__dirname,'../..'))},'')`);
+    assert(files.ok && files.entries.some(entry=>entry.name==='CLAUDE.md'),'Packaged file browser IPC must list the workspace');
     const state=await api('/api/state',undefined,'GET');
     assert.equal(state.ptyAvailable,true,'Packaged native ConPTY must load');
     await api('/api/workspaces',{title:'Packaged verification',cwd:path.resolve(__dirname,'../..')});
@@ -94,6 +97,30 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
       await delay(100);
     }
     assert(rendered,'Packaged ConPTY must execute a command and render its output');
+    await call('Input.dispatchKeyEvent',{type:'keyDown',key:',',code:'Comma',windowsVirtualKeyCode:188,modifiers:2});
+    await call('Input.dispatchKeyEvent',{type:'keyUp',key:',',code:'Comma',windowsVirtualKeyCode:188,modifiers:2});
+    for(let i=0;i<100;i++) {
+      if(await evaluate("!!document.querySelector('[data-settings-category=terminal]')"))break;
+      await delay(100);
+    }
+    await evaluate("document.querySelector('[data-settings-category=terminal]').click()");
+    await evaluate("const select=document.querySelector('[data-setting-control=terminalRenderer]');select.value='webgl';select.dispatchEvent(new Event('change'));document.getElementById('closeInspectorButton').click()");
+    let gpu=false;
+    for(let i=0;i<100;i++) {
+      gpu=await evaluate("document.querySelector('.terminal-host').dataset.renderer==='webgl'");
+      if(gpu)break;
+      await delay(100);
+    }
+    assert(gpu,'Packaged WebGL renderer must activate');
+    const imagePath=path.resolve(__dirname,'../src/assets/cmux.png').replaceAll("'","''");
+    await api('/api/input',{text:`$image=[IO.File]::ReadAllBytes('${imagePath}'); [Console]::Write(([char]27)+']1337;File=inline=1;width=32px;height=32px;size='+$image.Length+':'+[Convert]::ToBase64String($image)+[char]7)\r`});
+    let image=false;
+    for(let i=0;i<100;i++) {
+      image=await evaluate("[...document.querySelectorAll('.xterm-image-layer')].some(canvas=>canvas.getContext('2d').getImageData(0,0,canvas.width,canvas.height).data.some((value,index)=>index%4===3 && value>0))");
+      if(image)break;
+      await delay(100);
+    }
+    assert(image,'Packaged image decoder and WebAssembly CSP must render inline image pixels');
     const paneCount=await evaluate("document.querySelectorAll('.pane').length");
     await evaluate("document.querySelector('.xterm-helper-textarea').focus()");
     await call('Input.dispatchKeyEvent',{type:'keyDown',key:'d',code:'KeyD',windowsVirtualKeyCode:68,modifiers:2});
@@ -110,7 +137,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     fs.writeFileSync(path.resolve(__dirname,'../test-output/packaged.png'),Buffer.from(screenshot.data,'base64'));
     await evaluate('window.cmuxNative.closeWindow()');
     await Promise.race([exited,delay(10000).then(()=>{throw new Error('Packaged app did not close');})]);
-    console.log('PASS packaged cmux.exe: native ConPTY, workspace creation, command execution, rendered output, keyboard split, clean close');
+    console.log('PASS packaged cmux.exe: native ConPTY, workspace creation, command execution, rendered output, WebGL, inline image pixels, file IPC, keyboard split, clean close');
   } finally {
     socket?.close();
     if(child.exitCode===null) {

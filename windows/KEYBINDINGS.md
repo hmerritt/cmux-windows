@@ -66,7 +66,7 @@ these terminal defaults are separate from cmux-owned action overrides.
 
 ## Availability
 
-All 169 registry actions are listed below; 95 currently have Windows handlers.
+All 169 registry actions are listed below; 98 currently have Windows handlers.
 Unavailable actions do not intercept keys. Remaining actions require features
 absent from this port, including Cloud/team integration, workspace groups/status
 and session reopening, the full right sidebar/files/text-box UI, canvas layout,
@@ -129,7 +129,7 @@ Windows UI translation completeness.
 | Mark All Notifications Read (`markAllNotificationsRead`) | `Unbound` |  | Available |
 | Clear All Notifications (`clearAllNotifications`) | `Unbound` |  | Available |
 | Toggle Right Sidebar Focus (`focusRightSidebar`) | `shift+ctrl+e` |  | Available |
-| Show Sidebar Files (`switchRightSidebarToFiles`) | `Unbound` |  | Requires a feature not yet ported |
+| Show Sidebar Files (`switchRightSidebarToFiles`) | `Unbound` |  | Available |
 | Show Sidebar Find (`switchRightSidebarToFind`) | `Unbound` |  | Requires a feature not yet ported |
 | Show Sidebar Vault (`switchRightSidebarToSessions`) | `Unbound` |  | Requires a feature not yet ported |
 | Show Sidebar Feed (`switchRightSidebarToFeed`) | `Unbound` |  | Requires a feature not yet ported |
@@ -217,8 +217,8 @@ Windows UI translation completeness.
 | Canvas: Distribute Horizontally (`canvasDistributeHorizontally`) | `Unbound` |  | Requires a feature not yet ported |
 | Canvas: Distribute Vertically (`canvasDistributeVertically`) | `Unbound` |  | Requires a feature not yet ported |
 | Toggle Right Sidebar (`toggleFileExplorer`) | `alt+ctrl+b` |  | Available |
-| File Explorer: Open Selection (`fileExplorerOpenSelection`) | `enter` |  | Requires a feature not yet ported |
-| File Explorer: Open Selection (Finder Alias) (`fileExplorerOpenSelectionFinderAlias`) | `ctrl+down` |  | Requires a feature not yet ported |
+| File Explorer: Open Selection (`fileExplorerOpenSelection`) | `enter` |  | Available |
+| File Explorer: Open Selection (Finder Alias) (`fileExplorerOpenSelectionFinderAlias`) | `ctrl+down` |  | Available |
 | Save File Preview (`saveFilePreview`) | `ctrl+s` |  | Requires a feature not yet ported |
 | Toggle File Editor Word Wrap (`toggleFileEditorWordWrap`) | `alt+z` |  | Requires a feature not yet ported |
 | Open Browser (`openBrowser`) | `shift+ctrl+l` |  | Available |

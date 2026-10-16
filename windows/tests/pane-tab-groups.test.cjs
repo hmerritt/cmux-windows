@@ -47,3 +47,27 @@ test('replacing a tab leaf preserves the adjacent split',()=>{
   const tree={type:'split',id:'s',ratio:.7,first:{type:'pane',panelId:'a'},second:{type:'pane',panelId:'b'}};
   assert.deepEqual(replaceTreePanel(tree,'a','c'),{...tree,first:{type:'pane',panelId:'c'}});
 });
+test('tab transfer preserves source process, target tabs and split ratio',()=>{
+  const saved=storage(),tabs=new PaneTabGroups(saved);
+  const tree={type:'split',id:'s',ratio:.3,direction:'right',first:{type:'pane',panelId:'c'},second:{type:'pane',panelId:'b'}};
+  tabs.add('w','a','c');
+  const moved=tabs.transfer(tree,workspace('c'),'c','b');
+  assert.equal(moved.ratio,.3);
+  assert.deepEqual(tabs.members(workspace('c'),'b').map(p=>p.id),['c','b']);
+  assert.deepEqual(moved.first,{type:'pane',panelId:'a'});
+  assert.deepEqual(moved.second,{type:'pane',panelId:'c'});
+  assert.deepEqual(new PaneTabGroups(saved).members(workspace('c'),'c').map(p=>p.id),['c','b']);
+});
+test('detaching an inactive tab, merging whole groups and self drops retain every live panel',()=>{
+  const tabs=new PaneTabGroups(storage());tabs.add('w','a','c');
+  tabs.visiblePanels(workspace('a'));
+  const tree={type:'split',id:'s',ratio:.7,direction:'right',first:{type:'pane',panelId:'a'},second:{type:'pane',panelId:'b'}};
+  const detached=tabs.transfer(tree,workspace('a'),'c','b',{placement:'left'});
+  assert.equal(detached.ratio,.7);assert.equal(tabs.groupFor('a').active,'a');
+  assert.deepEqual(detached.second.first,{type:'pane',panelId:'c'});
+  assert.deepEqual(tabs.transfer(detached,workspace('a'),'c','c',{placement:'left'}),detached);
+  tabs.add('w','a','c');
+  const merged=tabs.transfer(tabs.remapTree(tree),workspace('a'),'a','b',{wholeGroup:true});
+  assert.deepEqual(merged,{type:'pane',panelId:'a'});
+  assert.deepEqual(new Set(tabs.groupFor('b').members),new Set(['a','b','c']));
+});

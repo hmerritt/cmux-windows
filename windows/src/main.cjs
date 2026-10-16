@@ -7,6 +7,7 @@ const path = require("node:path");
 const readline = require("node:readline");
 const { formatMessage, t } = require("./i18n.cjs");
 const {ShortcutConfig} = require('./shortcut-config.cjs');
+const workspaceFiles=new (require('./workspace-files.cjs').WorkspaceFiles)();
 const {ShortcutRouter, catalog} = require('../renderer/shortcut-engine.mjs');
 const {actionAvailable, actionPriority} = require('../renderer/shortcut-scopes.mjs');
 const separateWindow = process.argv.find(value=>value.startsWith('--cmux-window-id='))?.split('=')[1];
@@ -704,6 +705,14 @@ if (!hasLock) {
     return true;
   }, false));
   ipcMain.handle('shortcuts:get', trustedIpcHandler(()=>shortcutConfig.snapshot(),null));
+  ipcMain.handle('accessibility:get',trustedIpcHandler(()=>app.accessibilitySupportEnabled,false));
+  ipcMain.handle('files:list',trustedIpcHandler(async(_event,root,relative)=>{
+    try{return {ok:true,...await workspaceFiles.list(root,relative)};}catch(error){return {ok:false,error:error.message};}
+  },null));
+  ipcMain.handle('files:read',trustedIpcHandler(async(_event,root,relative)=>{
+    try{return {ok:true,...await workspaceFiles.read(root,relative)};}catch(error){return {ok:false,error:error.message};}
+  },null));
+  app.on('accessibility-support-changed',(_event,enabled)=>mainWindow?.webContents.send('cmux-accessibility',enabled));
   ipcMain.handle('shortcuts:update', trustedIpcHandler((_event,id,value,reset)=>publishShortcutSnapshot(shortcutConfig.update(id,value,reset)),null));
   ipcMain.handle('shortcuts:reload', trustedIpcHandler(()=>publishShortcutSnapshot(shortcutConfig.reload()),null));
   ipcMain.handle('shortcut:native', trustedIpcHandler(async (_event,action,guestId)=>{

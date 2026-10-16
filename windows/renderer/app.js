@@ -1,4 +1,8 @@
 import "./chrome.js";
+import {parityText} from './parity-messages.mjs';
+import {containModalFocus} from './modal-focus.mjs';
+import {createWorkspaceFileExplorer} from './workspace-files.mjs';
+const workspaceFileExplorer=createWorkspaceFileExplorer();
 import {PaneTabGroups, replaceTreePanel} from "./pane-tab-groups.js";
 const paneTabGroups = new PaneTabGroups(localStorage);
 import {
@@ -293,6 +297,9 @@ const TerminalConstructor = window.Terminal;
 const FitAddonConstructor = window.FitAddon?.FitAddon;
 const WebLinksAddonConstructor = window.WebLinksAddon?.WebLinksAddon;
 const SearchAddonConstructor = window.SearchAddon?.SearchAddon;
+const ImageAddonConstructor = window.ImageAddon?.ImageAddon;
+const WebglAddonConstructor = window.WebglAddon?.WebglAddon;
+let screenReaderEnabled=false;
 const terminalOutputChunkSize = 32768;
 const terminalOutputPerformanceChunkSize = 16384;
 const terminalOutputBacklogThreshold = 262144;
@@ -422,6 +429,7 @@ const backgroundPreviewKeys = new Set([
   "backgroundReadability"
 ]);
 const terminalSettingsPreviewKeys = new Set([
+  "terminalRenderer",
   "terminalFontFamily",
   "terminalFontSize",
   "terminalLineHeight",
@@ -629,6 +637,7 @@ const settingsInspectorSettingKeys = {
   ],
   terminal: [
     "accent",
+    "terminalRenderer",
     "terminalFontFamily",
     "terminalFontSize",
     "terminalLineHeight",
@@ -1582,6 +1591,7 @@ function normalizeSettings(input = {}, legacyFontSize = 0) {
   if (!statusDetailOptions.some(([id]) => id === next.statusDetailMode)) next.statusDetailMode = defaultSettings.statusDetailMode;
   if (!statusbarStyleOptions.some(([id]) => id === next.statusbarStyle)) next.statusbarStyle = defaultSettings.statusbarStyle;
   if (!paneMarkerStyleOptions.some(([id]) => id === next.paneMarkerStyle)) next.paneMarkerStyle = defaultSettings.paneMarkerStyle;
+  if (!["dom", "webgl"].includes(next.terminalRenderer)) next.terminalRenderer = defaultSettings.terminalRenderer;
   if (!terminalCursorStyles.some(([id]) => id === next.terminalCursorStyle)) next.terminalCursorStyle = defaultSettings.terminalCursorStyle;
   if (!terminalFontOptions.some(([id]) => id === next.terminalFontFamily)) next.terminalFontFamily = defaultSettings.terminalFontFamily;
   if (!terminalProfiles.some(([id]) => id === next.terminalProfile)) next.terminalProfile = defaultSettings.terminalProfile;
@@ -7140,6 +7150,7 @@ function settingsRenderSignature(settings = state.settings) {
     settings.workspaceColorStyle,
     settings.sidebarWidth,
     settings.inspectorWidth,
+    settings.terminalRenderer,
     settings.terminalFontFamily,
     settings.terminalFontSize,
     settings.terminalLineHeight,
@@ -7933,6 +7944,7 @@ function syncTerminalSessionPanelState(panel) {
 
 function refreshTerminalAppearance() {
   for (const session of state.terminals.values()) {
+    updateTerminalRenderer(session);
     const panel = findPanelState(session.panelId)?.panel;
     session.fontSize = terminalFontSizeForPanel(panel);
     session.term.options.fontFamily = terminalFontStack();
@@ -13419,6 +13431,10 @@ function createPane(panel) {
     closePanel(pane.dataset.panelId);
   };
   pane.addEventListener("dragover", (event) => {
+    if(state.dragPaneTab?.workspaceId===activeWorkspace()?.id) {
+      event.preventDefault();event.stopPropagation();
+      pane.dataset.dropPosition=paneDropPosition(event,pane);pane.classList.add('is-drop-target');return;
+    }
     if (!state.dragPanelId || state.dragPanelId === pane.dataset.panelId) return;
     event.preventDefault();
     clearPaneGridDropTarget();
@@ -13427,6 +13443,12 @@ function createPane(panel) {
   });
   pane.addEventListener("dragleave", () => clearPaneDropTarget(pane));
   pane.addEventListener("drop", (event) => {
+    if(state.dragPaneTab?.workspaceId===activeWorkspace()?.id) {
+      event.preventDefault();event.stopPropagation();
+      const drag=state.dragPaneTab,placement=paneDropPosition(event,pane);
+      state.dragPaneTab=null;clearAllDropTargets();
+      transferPaneTabs(drag.panelId,pane.dataset.panelId,{placement,wholeGroup:drag.wholeGroup});return;
+    }
     event.preventDefault();
     const placement = pane.dataset.dropPosition || paneDropPosition(event, pane);
     clearPaneDropTarget(pane);
@@ -13442,12 +13464,25 @@ function createPane(panel) {
   return pane;
 }
 
+function transferPaneTabs(sourceId,targetId,options={}) {
+  const workspace=activeWorkspace();
+  if(!workspace || !workspace.panels.some(panel=>panel.id===sourceId) || !workspace.panels.some(panel=>panel.id===targetId))return;
+  const tree=paneTreeForWorkspace(workspace);
+  state.paneTrees.set(workspace.id,paneTabGroups.transfer(tree,workspace,sourceId,targetId,options));
+  savePaneTreeLayouts(state.paneTrees);render();focusPanel(sourceId);
+}
+
 function renderPaneTabStrip(pane, selected, workspace) {
+  const content=pane.querySelector('.pane-body');
+  content.id=`pane-content-${selected.id}`;
+  content.setAttribute('role','tabpanel');
+  content.setAttribute('aria-labelledby',`pane-tab-${selected.id}`);
   let strip = pane.querySelector('.pane-tab-strip');
   if (!strip) {
     strip = document.createElement('div');
     strip.className = 'pane-tab-strip';
     strip.setAttribute('role', 'tablist');
+    strip.setAttribute('aria-label', t('surfaceTabs.ariaLabel', 'Pane tabs'));
     pane.querySelector('.pane-header').append(strip);
     const add = document.createElement('button');
     add.type = 'button';
@@ -13468,6 +13503,8 @@ function renderPaneTabStrip(pane, selected, workspace) {
     tab.dataset.tabPanelId = member.id;
     tab.setAttribute('role', 'tab');
     tab.setAttribute('aria-selected', String(member.id === selected.id));
+    tab.id=`pane-tab-${member.id}`;
+    tab.setAttribute('aria-controls',content.id);
     tab.tabIndex = member.id === selected.id ? 0 : -1;
     const icon = document.createElement('span');
     icon.className = 'pane-tab-icon';
@@ -13485,6 +13522,32 @@ function renderPaneTabStrip(pane, selected, workspace) {
     close.setAttribute('aria-label', t('tab.close', 'Close'));
     close.onclick = event => { event.stopPropagation(); closePanel(member.id); };
     tab.onclick = event => { event.stopPropagation(); focusPanel(member.id); };
+    tab.draggable=true;
+    tab.addEventListener('dragstart',event=>{
+      if(event.target.closest('.pane-tab-close')){event.preventDefault();return;}
+      event.stopPropagation();
+      state.dragPaneTab={panelId:member.id,workspaceId:workspace.id,wholeGroup:event.shiftKey};
+      document.body.classList.add('pane-tab-drag-active');
+      event.dataTransfer.effectAllowed='move';
+      event.dataTransfer.setData('application/x-cmux-pane-tab',member.id);
+      tab.classList.add('is-dragging');
+    });
+    tab.addEventListener('dragend',()=>{state.dragPaneTab=null;clearAllDropTargets();});
+    tab.addEventListener('dragover',event=>{
+      if(state.dragPaneTab?.workspaceId!==workspace.id)return;
+      event.preventDefault();event.stopPropagation();
+      const after=event.clientX>tab.getBoundingClientRect().left+tab.clientWidth/2;
+      tab.classList.toggle('is-drop-before',!after);tab.classList.toggle('is-drop-after',after);
+      event.dataTransfer.dropEffect='move';
+    });
+    tab.addEventListener('dragleave',()=>tab.classList.remove('is-drop-before','is-drop-after'));
+    tab.addEventListener('drop',event=>{
+      const drag=state.dragPaneTab;if(drag?.workspaceId!==workspace.id)return;
+      event.preventDefault();event.stopPropagation();
+      const after=event.clientX>tab.getBoundingClientRect().left+tab.clientWidth/2;
+      state.dragPaneTab=null;clearAllDropTargets();
+      transferPaneTabs(drag.panelId,member.id,{wholeGroup:drag.wholeGroup,after});
+    });
     tab.onkeydown = event => {
       if (event.target !== tab) return;
       if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); focusPanel(member.id); }
@@ -13493,6 +13556,12 @@ function renderPaneTabStrip(pane, selected, workspace) {
         const next = members[(index + (event.key === 'ArrowRight' ? 1 : members.length-1)) % members.length];
         focusPanel(next.id);
         requestAnimationFrame(()=>pane.querySelector(`[data-tab-panel-id="${next.id}"]`)?.focus());
+      }
+      if(event.key==='Home' || event.key==='End') {
+        event.preventDefault();event.stopPropagation();
+        const next=event.key==='Home'?members[0]:members.at(-1);
+        focusPanel(next.id);
+        requestAnimationFrame(()=>document.querySelector(`[data-tab-panel-id="${next.id}"]`)?.focus());
       }
     };
     tab.append(icon,label,close);
@@ -13533,7 +13602,7 @@ function paneDropPosition(event, pane) {
 }
 
 function startPanePointerDrag(event, pane) {
-  if (event.button !== 0 || event.target.closest(".pane-tool")) return;
+  if (event.button !== 0 || event.target.closest(".pane-tool,.pane-tab")) return;
   state.panePointerDrag = {
     panelId: pane.dataset.panelId,
     pointerId: event.pointerId,
@@ -13682,6 +13751,7 @@ function clearPaneDropTarget(pane) {
 }
 
 function clearAllDropTargets() {
+  document.body.classList.remove('pane-tab-drag-active');
   clearPaneGridDropTarget();
   clearSurfaceTabDropTargets();
   for (const session of state.browserViews.values()) clearBrowserTabDropTargets(session);
@@ -13983,6 +14053,19 @@ function flushDeferredTerminalInit() {
   if (activePanelId && state.deferredTerminalInitQueue.has(activePanelId)) scheduleDeferredTerminalInit();
 }
 
+function updateTerminalRenderer(session) {
+  if(state.settings.terminalRenderer!=='webgl') {
+    session.webglAddon?.dispose();session.webglAddon=null;session.host.dataset.renderer='dom';return;
+  }
+  if(session.webglAddon || !WebglAddonConstructor)return;
+  let addon;
+  try {
+    addon=new WebglAddonConstructor();session.term.loadAddon(addon);
+    session.webglAddon=addon;session.host.dataset.renderer='webgl';
+    addon.onContextLoss(()=>{addon.dispose();session.webglAddon=null;session.host.dataset.renderer='dom';});
+  } catch {addon?.dispose();session.webglAddon=null;session.host.dataset.renderer='dom';}
+}
+
 function ensureTerminal(panel, body) {
   if (state.terminals.has(panel.id)) return;
   body.replaceChildren();
@@ -14007,6 +14090,7 @@ function ensureTerminal(panel, body) {
     cursorBlink: state.settings.terminalCursorBlink,
     cursorStyle: state.settings.terminalCursorStyle,
     allowProposedApi: true,
+    screenReaderMode: screenReaderEnabled,
     convertEol: true,
     fontFamily: terminalFontStack(),
     fontSize,
@@ -14021,12 +14105,15 @@ function ensureTerminal(panel, body) {
   term.loadAddon(webLinksAddon);
   if (searchAddon) term.loadAddon(searchAddon);
   term.open(host);
+  host.dataset.renderer='dom';
+  if(ImageAddonConstructor)term.loadAddon(new ImageAddonConstructor({storageLimit:32,pixelLimit:16777216,sixelSizeLimit:10000000,iipSizeLimit:10000000}));
 
   const terminalUrl = new URL(`/terminal/${panel.id}`, location.origin.replace(/^http/, "ws"));
   if (launchToken) terminalUrl.searchParams.set("token", launchToken);
   const socket = new WebSocket(terminalUrl.href);
   const session = {
     panelId: panel.id,
+    webglAddon:null,
     term,
     fitAddon,
     searchAddon,
@@ -14104,6 +14191,7 @@ function ensureTerminal(panel, body) {
   session.resizeObserver.observe(host);
   requestInitialTerminalLayout(session, panel.id);
   state.terminals.set(panel.id, session);
+  updateTerminalRenderer(session);
 }
 
 function requestInitialTerminalLayout(session, panelId, frame = 0) {
@@ -16231,6 +16319,7 @@ function mergeSettingsInspectorRenderOptions(current = {}, next = {}) {
 }
 
 function renderInspector(options = {}) {
+  if(state.inspectorMode!=='files')workspaceFileExplorer.invalidate();
   if (!state.inspectorMode) {
     state.inspectorSignature = "";
     return;
@@ -16265,6 +16354,11 @@ function renderInspector(options = {}) {
       };
       return card;
     }));
+  } else if(state.inspectorMode==='files') {
+    state.inspectorSignature='files';
+    setTextIfChanged(elements.inspectorTitle,workspaceFileExplorer.label);
+    setTextIfChanged(elements.inspectorSubtitle,activeWorkspace()?.cwd || '');
+    workspaceFileExplorer.render(activeWorkspace()?.cwd || '',elements.inspectorBody);
   } else if (state.inspectorMode === "settings") {
     state.inspectorSignature = "settings";
     if (options.deferSettings && elements.inspectorBody.querySelector(".settings-react-host")) {
@@ -16832,6 +16926,12 @@ function renderSettingsInspector(options = {}) {
   if (shouldBuildSection("terminal")) {
     const terminalSection = settingsSection("Terminal");
     terminalSection.append(terminalSettingsPreviewPanel());
+    const rendererSelect=document.createElement('select');
+    rendererSelect.className='setting-select';rendererSelect.dataset.settingControl='terminalRenderer';
+    for(const value of ['dom','webgl']){const option=document.createElement('option');option.value=value;option.textContent=value==='dom'?'DOM':'WebGL';rendererSelect.append(option);}
+    rendererSelect.value=state.settings.terminalRenderer==='webgl'?'webgl':'dom';
+    rendererSelect.onchange=()=>{updateSettings({terminalRenderer:rendererSelect.value});refreshTerminalAppearance();};
+    terminalSection.append(settingRow(parityText('renderer'),rendererSelect));
     terminalSection.append(terminalReadabilityPresetGrid());
     const fontSelect = document.createElement("select");
     fontSelect.className = "setting-select";
@@ -18099,10 +18199,11 @@ function activeBackgroundTargetControl() {
 
 function updateActiveBackgroundTargetControl(root) {
   const options = backgroundApplyTargetOptions();
+  const optionsById=new Map(options.map(option=>[option.id,option]));
   const selected = backgroundApplyTargetOption(state.backgroundApplyTarget);
   setTextIfChanged(root.querySelector(".background-target-current"), `${selected.label} / ${selected.meta}`);
   for (const button of root.querySelectorAll("[data-background-target]")) {
-    const target = options.find((candidate) => candidate.id === button.dataset.backgroundTarget);
+    const target = optionsById.get(button.dataset.backgroundTarget);
     if (!target) continue;
     const model = activeBackgroundPanelViewModel(target.id);
     const active = target.id === normalizeBackgroundApplyTarget(state.backgroundApplyTarget);
@@ -33158,10 +33259,11 @@ function activeColorTargetControl() {
 
 function updateActiveColorTargetControl(root) {
   const options = colorApplyTargetOptions();
+  const optionsById=new Map(options.map(option=>[option.id,option]));
   const selected = colorApplyTargetOption(state.colorApplyTarget);
   setTextIfChanged(root.querySelector(".background-target-current"), `${selected.label} / ${selected.status}`);
   for (const button of root.querySelectorAll("[data-color-target]")) {
-    const target = options.find((candidate) => candidate.id === button.dataset.colorTarget);
+    const target = optionsById.get(button.dataset.colorTarget);
     if (!target) continue;
     const active = target.id === normalizeColorApplyTarget(state.colorApplyTarget);
     setClassNameIfChanged(button, `background-target-option${active ? " is-active" : ""}${target.disabled ? " is-disabled" : ""}`);
@@ -38919,7 +39021,9 @@ function showTextDialog({
   field.append(input);
 
   return new Promise((resolve) => {
+    let releaseFocus=()=>{};
     const cleanup = (result) => {
+      releaseFocus();
       overlay.remove();
       state.activeDialog = null;
       if (previousFocus?.focus) previousFocus.focus();
@@ -38942,6 +39046,10 @@ function showTextDialog({
       }
     });
     document.body.append(overlay);
+    releaseFocus=containModalFocus(overlay,{title:overlay.querySelector('.dialog-title')});
+    for(const field of overlay.querySelectorAll('input,textarea')) {
+      if(!field.getAttribute('aria-label') && !field.labels?.length)field.setAttribute('aria-label',overlay.querySelector('.dialog-title').textContent);
+    }
     requestAnimationFrame(() => {
       input.focus();
       input.select();
@@ -38996,7 +39104,9 @@ function showCommandSnippetDialog({
   );
 
   return new Promise((resolve) => {
+    let releaseFocus=()=>{};
     const cleanup = (result) => {
+      releaseFocus();
       overlay.remove();
       state.activeDialog = null;
       if (previousFocus?.focus) previousFocus.focus();
@@ -39031,6 +39141,10 @@ function showCommandSnippetDialog({
       }
     });
     document.body.append(overlay);
+    releaseFocus=containModalFocus(overlay,{title:overlay.querySelector('.dialog-title')});
+    for(const field of overlay.querySelectorAll('input,textarea')) {
+      if(!field.getAttribute('aria-label') && !field.labels?.length)field.setAttribute('aria-label',overlay.querySelector('.dialog-title').textContent);
+    }
     requestAnimationFrame(() => {
       nameInput.focus();
       nameInput.select();
@@ -39081,7 +39195,9 @@ function showConfirmDialog({
   confirm.classList.toggle("danger", danger);
 
   return new Promise((resolve) => {
+    let releaseFocus=()=>{};
     const cleanup = (result) => {
+      releaseFocus();
       overlay.remove();
       state.activeDialog = null;
       if (previousFocus?.focus) previousFocus.focus();
@@ -39104,6 +39220,10 @@ function showConfirmDialog({
       }
     });
     document.body.append(overlay);
+    releaseFocus=containModalFocus(overlay,{title:overlay.querySelector('.dialog-title')});
+    for(const field of overlay.querySelectorAll('input,textarea')) {
+      if(!field.getAttribute('aria-label') && !field.labels?.length)field.setAttribute('aria-label',overlay.querySelector('.dialog-title').textContent);
+    }
     requestAnimationFrame(() => confirm.focus());
   });
 }
@@ -39437,6 +39557,12 @@ function renderPaletteQuickActions() {
 function renderPalette() {
   elements.palette.classList.toggle("is-open", state.paletteOpen);
   elements.palette.setAttribute("aria-hidden", String(!state.paletteOpen));
+  elements.paletteInput.setAttribute('role','combobox');
+  elements.paletteInput.setAttribute('aria-autocomplete','list');
+  elements.paletteInput.setAttribute('aria-controls',elements.paletteList.id);
+  elements.paletteInput.setAttribute('aria-expanded',String(state.paletteOpen));
+  elements.paletteList.setAttribute('role','listbox');
+  elements.paletteList.setAttribute('aria-label',t('palette.searchLabel'));
   if (!state.paletteOpen) return;
 
   const query = normalizeSettingsQuery(elements.paletteInput.value);
@@ -39461,6 +39587,8 @@ function renderPalette() {
     const kind = paletteEntryKind(entry);
     const disabled = Boolean(entry.disabled);
     button.type = "button";
+    button.id=`cmux-palette-option-${index}`;
+    button.setAttribute('role','option');button.tabIndex=-1;
     button.disabled = disabled;
     button.title = entry.title || `${entry.label}${entry.meta ? ` - ${entry.meta}` : ""}`;
     button.className = `palette-item palette-kind-${kind}${entry.active ? " is-active-entry" : ""}${disabled ? " is-disabled-entry" : ""}${index === state.paletteIndex ? " is-selected" : ""}`;
@@ -39498,6 +39626,7 @@ function renderPalette() {
     nodes.push(more);
   }
   elements.paletteList.replaceChildren(...nodes);
+  updatePaletteSelection();
 }
 
 function paletteEntriesForQuery(query, tokens, resultLimit = paletteVisibleResultLimit()) {
@@ -39636,6 +39765,9 @@ function paletteEntryIconMarkup(entry, kind = paletteEntryKind(entry)) {
 
 function updatePaletteSelection() {
   const items = [...elements.paletteList.querySelectorAll(".palette-item")];
+  const active=items[state.paletteIndex];
+  if(active)elements.paletteInput.setAttribute('aria-activedescendant',active.id);
+  else elements.paletteInput.removeAttribute('aria-activedescendant');
   for (const [index, item] of items.entries()) {
     const selected = index === state.paletteIndex;
     const classChanged = toggleClassIfChanged(item, "is-selected", selected);
@@ -41551,22 +41683,33 @@ function schedulePaletteFocus() {
   });
 }
 
+let releasePaletteFocus=null;
+let previousPaletteFocus=null;
 function openPalette() {
+  if(!state.paletteOpen)previousPaletteFocus=document.activeElement;
   state.paletteOpen = true;
   state.paletteIndex = 0;
   resetPaletteEntriesCache();
   renderPalette();
+  releasePaletteFocus?.();
+  elements.palette.querySelector('.palette-dialog').setAttribute('role','dialog');
+  elements.palette.querySelector('.palette-dialog').setAttribute('aria-modal','true');
+  elements.palette.querySelector('.palette-dialog').setAttribute('aria-label',t('palette.searchLabel'));
+  releasePaletteFocus=containModalFocus(elements.palette,{initialFocus:elements.paletteInput});
   elements.paletteList.scrollTop = 0;
   schedulePaletteFocus();
 }
 
 function closePalette() {
+  releasePaletteFocus?.();releasePaletteFocus=null;
   state.paletteOpen = false;
   state.paletteWorkspaceOnly = false;
   cancelPaletteFocus();
   resetPaletteEntriesCache();
   elements.paletteList.scrollTop = 0;
   renderPalette();
+  if(previousPaletteFocus?.isConnected)previousPaletteFocus.focus();
+  previousPaletteFocus=null;
 }
 
 function runPaletteCommand(entry) {
@@ -43586,6 +43729,11 @@ function openInspector(mode) {
   if (state.inspectorMode !== "settings") state.settingsSearchFocusPending = false;
   updateRailButtons();
   render();
+}
+
+function openWorkspaceFiles() {
+  state.inspectorMode='files';updateRailButtons();render();
+  requestAnimationFrame(()=>workspaceFileExplorer.focus());
 }
 
 function openSettingsCategory(category = "quick", options = {}) {
@@ -45776,8 +45924,15 @@ if (window.cmuxNative?.onWindowState) {
   window.cmuxNative.onWindowState((windowState) => updateMaximizeButton(Boolean(windowState.maximized)));
 }
 
+function setScreenReaderSupport(enabled) {
+  screenReaderEnabled=Boolean(enabled);
+  for(const session of state.terminals.values())session.term.options.screenReaderMode=screenReaderEnabled;
+}
+window.cmuxNative?.getAccessibilitySupport?.().then(setScreenReaderSupport);
+window.cmuxNative?.onAccessibilitySupport?.(setScreenReaderSupport);
+
 const windowsShortcuts = installWindowsShortcuts({
-  state,elements,commands,paneTabGroups,focusedPanel,activePanel,activeWorkspace,
+  state,elements,commands,paneTabGroups,focusedPanel,activePanel,activeWorkspace,transferPaneTabs,openWorkspaceFiles,workspaceFileExplorer,
   updatePanel,updatePanels,
   isFormEditableTarget,isPanelMinimized,focusPanel,findPanelState,render,
   paneTreeForWorkspace,replacePaneTreePanelId,removePanelFromPaneTree,savePaneTreeLayouts,

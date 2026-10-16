@@ -3,6 +3,10 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 contextBridge.exposeInMainWorld("cmuxNative", {
   electron: true,
   platform: process.platform,
+  getAccessibilitySupport:()=>ipcRenderer.invoke('accessibility:get'),
+  listWorkspaceFiles:(root,relative='')=>ipcRenderer.invoke('files:list',root,relative),
+  readWorkspaceFile:(root,relative)=>ipcRenderer.invoke('files:read',root,relative),
+  onAccessibilitySupport(callback){ipcRenderer.on('cmux-accessibility',(_event,enabled)=>callback(enabled));},
   getShortcuts: () => ipcRenderer.invoke('shortcuts:get'),
   updateShortcut: (id,value,reset=false) => ipcRenderer.invoke('shortcuts:update',id,value,reset),
   reloadShortcuts: () => ipcRenderer.invoke('shortcuts:reload'),

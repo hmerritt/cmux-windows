@@ -616,7 +616,7 @@ const windowsMessages = {
   }
 };
 
-function currentLocale() {
+export function currentLocale() {
   const documentLocale = typeof location !== "undefined" ? new URLSearchParams(location.search).get('locale') : "";
   const navigatorLocale = typeof navigator !== "undefined" ? navigator.language : "";
   const locale = String(documentLocale || navigatorLocale || 'en');

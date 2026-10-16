@@ -88,6 +88,7 @@ export const defaultSettings = {
   terminalSmoothResumedOutput: true,
   terminalCursorStyle: "block",
   terminalCursorBlink: true,
+  terminalRenderer: 'dom',
   terminalBackground: "",
   terminalForeground: "",
   terminalCursorColor: "",
@@ -817,6 +818,7 @@ export const terminalColorPresets = [
 ];
 
 export const terminalAppearanceKeys = new Set([
+  "terminalRenderer",
   "theme",
   "accent",
   "terminalFontFamily",

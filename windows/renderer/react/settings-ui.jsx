@@ -10,7 +10,16 @@ export function renderSettingsShell(container, props) {
     root = createRoot(container);
     roots.set(container, root);
   }
-  root.render(<SettingsShell {...props} />);
+  root.render(<SettingsShell {...props}
+    onQuery={query=>{
+      renderSettingsShell(container,{...props,query});
+      props.onQuery(query);
+    }}
+    onClear={()=>{
+      renderSettingsShell(container,{...props,query:''});
+      props.onClear();
+    }}
+  />);
 }
 
 export function unmountSettingsShell(container) {
