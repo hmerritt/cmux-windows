@@ -88,6 +88,9 @@ Diff-detail regression `ad56597ab1` fails with `node --test tests/workspace-git.
 and `npm run test:documents`; both pass with word highlights, indicator modes and
 expanded context. Model checks cover Unicode, bounded word comparisons, output
 limits and changes during expanded reads.
+First-load regression `aecfd74c6c` fails with `npm run test:documents` when
+newly registered polling fallbacks are paused; the same command passes after
+attachment schedules the first refresh without waiting for a polling interval.
 They do not replace or stop an already running user build.
 
 ## Remaining gaps

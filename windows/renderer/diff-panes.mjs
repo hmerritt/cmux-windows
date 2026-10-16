@@ -165,7 +165,7 @@ export function createDiffPanes() {
         toolbar.prepend(search,reload);split.append(list,patch);host.append(toolbar,notice,preferenceNotice,contextNotice,split);
         sessions.set(panel.id,session);applyPreferences({});session.timer=setInterval(()=>refresh(session),3000);
       }
-      if(session.host.parentElement!==body){body.replaceChildren(session.host);refresh(session);}
+      if(session.host.parentElement!==body){body.replaceChildren(session.host);requestAnimationFrame(()=>refresh(session));}
     },
     focus(id){const session=sessions.get(id);if(session?.host.isConnected)session.host.focus();},
     action(id,action) {
