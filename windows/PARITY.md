@@ -11,7 +11,7 @@ It does not execute Apple SwiftUI or the macOS GhosttyKit binary.
 | Window and pane chrome | Live dimensions match the current Swift constants: 28-point titlebar and pane bars, 240-point default sidebar. Tests read the Swift source so subsequent source changes expose drift. |
 | Default appearance | Charcoal sidebar, Monokai terminal, blue workspace selection, compact controls, thin split separators and blue attention treatment compared visually against repository screenshots. |
 | Terminal | Real PowerShell and Unicode input/output through ConPTY. Optional WebGL rendering; SIXEL and iTerm inline images verified by reading rendered pixels after real shell output. DOM remains the default. |
-| Per-split tabs | Create, switch, close, reorder, move a tab, Shift-drag a group and detach into an edge split. Model tests and desktop HTML5 drag events verify membership, surviving processes and saved layout. Physical pointer dragging still needs manual validation. |
+| Per-split tabs | Create, switch, close, reorder, move a tab, Shift-drag a group and detach into an edge split. Workspace-row drops move tabs or whole groups between workspaces in one runtime operation. Model and desktop HTML5 drag tests verify membership and restored layout; runtime tests verify process identity and rejected batches. Physical pointer dragging still needs manual validation. |
 | Nested splits | Right and down splits, all panes visible at 640×480, 1280×800 and 1920×1080; terminal canvas fills the window. |
 | Browser | Local fixture page loaded in a real guest, with sandbox enabled and Node integration disabled. |
 | Notifications | Runtime notification reaches workspace summary, attention ring and bell count; notification panel opens. |
@@ -43,9 +43,10 @@ $env:CMUX_TEST_BINARY = "$PWD/release-parity/win-unpacked/cmux.exe"
 npm run test:packaged
 ```
 
-The tab-drag regression was committed failing in `8675e3060d`; the same
-`npm run test:parity` command passes with the implementation. Unit/model tests
-cover 16 behaviors. Desktop tests use isolated profiles and private pipes.
+The original tab-drag regression was committed failing in `8675e3060d`;
+cross-workspace drops were committed failing in `1165162f6e`. The same
+`npm run test:parity` command passes with both implementations. Unit/model tests
+cover 19 behaviors. Desktop tests use isolated profiles and private pipes.
 They do not replace or stop an already running user build.
 
 ## Remaining gaps
@@ -57,8 +58,8 @@ They do not replace or stop an already running user build.
   graphics, ligatures/shaping, selection, copy mode and native IME composition
   need further implementation or verification. Unicode insertion and two image
   protocols passing do not establish full text-input or graphics parity.
-- **Bonsplit behavior:** per-split tab dragging works within a workspace.
-  Cross-workspace/window tab dragging and the full Bonsplit interaction model
+- **Bonsplit behavior:** per-split tab dragging works within a workspace and
+  between workspaces through sidebar row drops. Cross-window tab dragging and the full Bonsplit interaction model
   remain. The optional global tab bar is a separate inherited surface.
 - **Settings and sidebar:** the upstream Windows settings UI remains; the macOS
   settings window is not recreated 1:1. The file browser is read-only. File

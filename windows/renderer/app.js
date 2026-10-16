@@ -11284,11 +11284,11 @@ function createWorkspaceRow() {
     if (workspace) showWorkspaceContextMenu(event, workspace);
   });
   button.addEventListener("dragover", (event) => {
-    if (!state.dragPanelId && !state.dragWorkspaceId) return;
+    if (!state.dragPanelId && !state.dragWorkspaceId && !state.dragPaneTab) return;
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
     clearWorkspaceListDropTarget();
-    if (state.dragPanelId) {
+    if (state.dragPanelId || state.dragPaneTab) {
       setWorkspaceRowDropTarget(button, "panel");
       return;
     }
@@ -11307,7 +11307,11 @@ function createWorkspaceRow() {
     const targetWorkspaceId = button.dataset.workspaceId;
     const workspacePlacement = workspaceDropPlacement(event, button);
     clearWorkspaceRowDropTarget(button);
-    if (state.dragPanelId) movePanelToWorkspace(state.dragPanelId, targetWorkspaceId);
+    if (state.dragPaneTab) {
+      const drag=state.dragPaneTab;state.dragPaneTab=null;clearAllDropTargets();
+      movePaneTabsToWorkspace(drag.panelId,targetWorkspaceId,{wholeGroup:drag.wholeGroup});
+    }
+    else if (state.dragPanelId) movePanelToWorkspace(state.dragPanelId, targetWorkspaceId);
     else if (state.dragWorkspaceId && state.dragWorkspaceId !== targetWorkspaceId) {
       moveWorkspaceRelative(state.dragWorkspaceId, targetWorkspaceId, workspacePlacement);
     }
@@ -13472,6 +13476,35 @@ function transferPaneTabs(sourceId,targetId,options={}) {
   savePaneTreeLayouts(state.paneTrees);render();focusPanel(sourceId);
 }
 
+async function movePaneTabsToWorkspace(panelId,workspaceId,options={}) {
+  const source=findPanelState(panelId)?.workspace;
+  const target=state.data?.workspaces.find(workspace=>workspace.id===workspaceId);
+  if(!source || !target || source===target || state.pendingPaneTabTransfer)return;
+  // Update ownership and layout together before the runtime broadcast can render.
+  const previousGroups=structuredClone(paneTabGroups.groups);
+  const previousTrees=new Map(state.paneTrees);
+  const previousData=structuredClone(state.data);
+  const result=paneTabGroups.moveToWorkspace(paneTreeForWorkspace(source),paneTreeForWorkspace(target),source,target,panelId,options);
+  if(!result)return;
+  state.pendingPaneTabTransfer=true;
+  state.paneTrees.set(source.id,result.sourceTree);
+  state.paneTrees.set(target.id,result.targetTree);
+  for(const movingId of result.panelIds)optimisticUpdatePanel(movingId,{workspaceId,moveToEnd:true},{render:false});
+  target.activePanelId=panelId;
+  if(!source.panels.some(panel=>panel.id===source.activePanelId))source.activePanelId=paneTabGroups.visiblePanels(source)[0]?.id || null;
+  savePaneTreeLayouts(state.paneTrees);render();
+  try {
+    const response=await api('/api/panels/transfer',{method:'POST',body:JSON.stringify({panelIds:result.panelIds,workspaceId,activePanelId:panelId})});
+    if(!response?.ok)throw Error('transfer_failed');
+    focusPanel(panelId);
+  } catch {
+    paneTabGroups.groups=previousGroups;paneTabGroups.save();
+    state.paneTrees=previousTrees;savePaneTreeLayouts(state.paneTrees);
+    state.data=previousData;
+    await loadState();
+  } finally {state.pendingPaneTabTransfer=false;}
+}
+
 function renderPaneTabStrip(pane, selected, workspace) {
   const content=pane.querySelector('.pane-body');
   content.id=`pane-content-${selected.id}`;
@@ -13766,6 +13799,7 @@ function clearAllDropTargets() {
   state.panePointerDrag = null;
   state.dragPanelId = null;
   state.dragWorkspaceId = null;
+  state.dragPaneTab = null;
 }
 
 function cleanupPanel(panelId) {
@@ -43190,6 +43224,8 @@ function swapPanePositions(panelId, targetPanelId) {
 
 async function movePanelToWorkspace(panelId, workspaceId) {
   if (!panelId || !workspaceId) return;
+  const sourceWorkspace=findPanelState(panelId)?.workspace;
+  if(sourceWorkspace && sourceWorkspace.id!==workspaceId)return movePaneTabsToWorkspace(panelId,workspaceId);
   const targetWorkspace = state.data?.workspaces.find((workspace) => workspace.id === workspaceId);
   removePanelFromAllPaneTrees(panelId);
   insertPanelInPaneTree(workspaceId, targetWorkspace?.activePanelId, panelId, "right");

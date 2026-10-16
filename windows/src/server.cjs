@@ -1099,6 +1099,25 @@ class CmuxWindowsRuntime {
     return true;
   }
 
+  movePanels(panelIds, targetWorkspaceId, activePanelId) {
+    const target=this.state.workspaces.find(workspace=>workspace.id===targetWorkspaceId);
+    if(!target || !Array.isArray(panelIds) || !panelIds.length || new Set(panelIds).size!==panelIds.length || !panelIds.includes(activePanelId))return false;
+    const found=panelIds.map(panelId=>this.findPanel(panelId));
+    const source=found[0]?.workspace;
+    if(!source || source===target || found.some(item=>!item || item.workspace!==source))return false;
+    const moving=new Set(panelIds);
+    source.panels=source.panels.filter(panel=>!moving.has(panel.id));
+    if(moving.has(source.activePanelId))source.activePanelId=source.panels[0]?.id || null;
+    for(const {panel} of found) {
+      panel.workspaceId=target.id;
+      target.panels.push(panel);
+    }
+    target.activePanelId=activePanelId;
+    this.state.activeWorkspaceId=target.id;
+    this.persistAndBroadcast();
+    return true;
+  }
+
   updatePanel(panelId, updates = {}) {
     if (Object.hasOwn(updates, "workspaceId") || Object.hasOwn(updates, "beforePanelId") || Object.hasOwn(updates, "moveToEnd")) {
       const ok = this.movePanel(panelId, updates.workspaceId, updates.moveToEnd ? null : updates.beforePanelId);
@@ -1379,6 +1398,12 @@ class CmuxWindowsRuntime {
       if (request.method === "DELETE" && panelDeleteMatch) {
         const ok = this.closePanel(panelDeleteMatch[1]);
         writeJSON(response, ok ? 200 : 409, { ok });
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/panels/transfer") {
+        const body=await readBody(request);
+        const ok=this.movePanels(body.panelIds,body.workspaceId,body.activePanelId);
+        writeJSON(response,ok?200:409,{ok});
         return;
       }
       const panelUpdateMatch = url.pathname.match(/^\/api\/panels\/([^/]+)$/);

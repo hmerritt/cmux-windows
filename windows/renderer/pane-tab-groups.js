@@ -1,6 +1,6 @@
 // Tab membership belongs to the desktop layout, alongside the existing split
 // tree. Terminal processes remain owned by the runtime when their tab is hidden.
-import {removePanelFromPaneTree,insertPanelAtLeaf} from './pane-tree.js';
+import {removePanelFromPaneTree,insertPanelAtLeaf,appendPaneTreeLeaf} from './pane-tree.js';
 export class PaneTabGroups {
   constructor(storage) {
     this.storage = storage;
@@ -59,6 +59,22 @@ export class PaneTabGroups {
     group.members=group.members.filter(id=>id!==panelId);
     group.members.splice(group.members.indexOf(targetId)+(after?1:0),0,panelId);
     this.save();return true;
+  }
+  moveToWorkspace(sourceTree,targetTree,sourceWorkspace,targetWorkspace,panelId,{wholeGroup=false}={}) {
+    if(sourceWorkspace.id===targetWorkspace.id || !sourceWorkspace.panels.some(panel=>panel.id===panelId))return null;
+    const group=this.groupFor(panelId);
+    const panelIds=wholeGroup && group?[...group.members]:[panelId];
+    const oldActive=group?.active || panelId;
+    if(wholeGroup && group) {
+      group.workspaceId=targetWorkspace.id;
+      group.active=panelId;
+      sourceTree=removePanelFromPaneTree(sourceTree,oldActive);
+    } else {
+      const replacement=this.replacementForRemoval(panelId);
+      if(oldActive===panelId)sourceTree=replacement?replaceTreePanel(sourceTree,panelId,replacement):removePanelFromPaneTree(sourceTree,panelId);
+    }
+    targetTree=appendPaneTreeLeaf(targetTree,panelId,targetWorkspace.splitDirection==='down'?'down':'right');
+    this.save();return {panelIds,sourceTree,targetTree};
   }
   transfer(tree,workspace,sourceId,targetId,{placement='center',wholeGroup=false,after=false}={}) {
     const live=new Set(workspace.panels.map(panel=>panel.id));
