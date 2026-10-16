@@ -98,7 +98,12 @@ app.once('browser-window-created',(_event,win)=>{
       const preferencesReloaded=new Promise(resolve=>win.webContents.once('did-finish-load',resolve));win.webContents.reload();await preferencesReloaded;
       await waitFor("document.querySelector('.diff-pane')?.dataset.diffLayout==='split' && document.querySelector('.diff-patch .diff-split-row')");
       assert(await evaluate("document.querySelector('.diff-pane').dataset.wordWrap==='true' && document.querySelector('.diff-pane').dataset.lineNumbers==='false'"),'Display preferences survive renderer reload');
-      await api('/api/panels',{workspaceId:workspace.id,type:'diff',cwd:root,title:'Second diff'});
+      // Pause newly registered 3-second polling fallbacks: the first load must
+      // follow attachment and must not depend on a later refresh tick.
+      await evaluate("window.originalDiffTestInterval=window.setInterval;window.setInterval=(callback,delay,...args)=>window.originalDiffTestInterval(delay===3000?()=>{}:callback,delay,...args);void 0");
+      const secondDiff=await api('/api/panels',{workspaceId:workspace.id,type:'diff',cwd:root,title:'Second diff'});
+      await waitFor(`!!document.querySelector('.pane[data-panel-id="${secondDiff.id}"] .diff-file')`);
+      await evaluate("window.setInterval=window.originalDiffTestInterval;delete window.originalDiffTestInterval");
       await waitFor("document.querySelectorAll('.diff-pane').length===2 && [...document.querySelectorAll('.diff-pane')].every(pane=>pane.dataset.diffLayout==='split' && pane.dataset.lineNumbers==='false')");
       await evaluate("document.querySelector('[data-diff-option=showBackgrounds]').click()");
       await waitFor("[...document.querySelectorAll('.diff-pane')].every(pane=>pane.dataset.showBackgrounds==='false')");
