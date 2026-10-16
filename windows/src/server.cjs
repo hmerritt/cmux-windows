@@ -680,6 +680,7 @@ class TerminalProcess {
       const notificationText = data.replace(/\s+/g, " ").trim().slice(0, 160);
       if (!this.panel.needsAttention || this.panel.notificationText !== notificationText) {
         this.panel.needsAttention = true;
+        this.panel.notificationOrder = Date.now();
         this.panel.notificationText = notificationText;
         this.panel.runtime.scheduleTerminalMetadataBroadcast();
       }
@@ -726,7 +727,7 @@ class TerminalProcess {
 class CmuxWindowsRuntime {
   constructor(options = {}) {
     this.staticDir = options.staticDir || path.join(__dirname, "..", "renderer");
-    this.dataDir = options.dataDir || appDataRoot();
+    this.dataDir = options.dataDir || process.env.CMUX_WINDOWS_DATA_DIR || appDataRoot();
     this.sessionFile = path.join(this.dataDir, "session.json");
     this.pipeName = options.pipeName || defaultPipeName;
     this.server = null;
@@ -938,7 +939,8 @@ class CmuxWindowsRuntime {
       terminalFontSize: panel.type === "terminal" ? sanitizeTerminalFontSize(panel.terminalFontSize, 0) : 0,
       url: panel.url,
       needsAttention: panel.needsAttention,
-      notificationText: panel.notificationText
+      notificationText: panel.notificationText,
+      notificationOrder: panel.notificationOrder || 0
     };
   }
 
@@ -1130,6 +1132,12 @@ class CmuxWindowsRuntime {
     if (Object.hasOwn(updates, "terminalFontSize") && found.panel.type === "terminal") {
       found.panel.terminalFontSize = sanitizeTerminalFontSize(updates.terminalFontSize, 0);
     }
+    if (typeof updates.needsAttention === 'boolean') {
+      found.panel.needsAttention = updates.needsAttention;
+      found.panel.notificationOrder = updates.needsAttention ? Date.now() : 0;
+      if (!updates.needsAttention) found.panel.notificationText = '';
+    }
+    if (updates.notificationOrder === 0 && found.panel.needsAttention) found.panel.notificationOrder = 0;
     this.persistAndBroadcast();
     return true;
   }
@@ -1227,6 +1235,7 @@ class CmuxWindowsRuntime {
       || workspace.panels[0];
     if (!panel) return null;
     panel.needsAttention = true;
+    panel.notificationOrder = Date.now();
     panel.notificationText = String(message || "Notification").slice(0, 160);
     this.broadcastState();
     return panel;
@@ -1484,7 +1493,7 @@ class CmuxWindowsRuntime {
     const ext = path.extname(filePath).toLowerCase();
     if (ext === ".html") return "text/html; charset=utf-8";
     if (ext === ".css") return "text/css; charset=utf-8";
-    if (ext === ".js") return "text/javascript; charset=utf-8";
+    if (ext === ".js" || ext === ".mjs") return "text/javascript; charset=utf-8";
     if (ext === ".json") return "application/json; charset=utf-8";
     if (ext === ".svg") return "image/svg+xml; charset=utf-8";
     return "application/octet-stream";

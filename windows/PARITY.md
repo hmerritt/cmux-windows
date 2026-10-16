@@ -31,7 +31,9 @@ verification artifacts, not pixel-identical macOS golden images.
   Terminal rendering uses xterm.js rather than Ghostty's GPU renderer; image
   protocols, shaping, selection and IME need broader parity testing.
 - Tab drag/reorder and moving tab groups between splits are not matched to
-  Bonsplit. The inherited optional global tab bar is separate from per-split tabs.
+  Bonsplit. Keyboard tab reorder and moving the active surface to a neighboring
+  split are implemented; pointer dragging is not. The inherited optional global
+  tab bar is separate from per-split tabs.
 - Windows settings retain the upstream Windows settings UI; the macOS settings
   window and all current right-sidebar tools have not been recreated 1:1.
 - The build reuses 195 unambiguous existing messages across nine catalogs/locales;
@@ -40,6 +42,10 @@ verification artifacts, not pixel-identical macOS golden images.
   completeness.
 - Full macOS CLI/config/keymap compatibility, remote workspaces, updater,
   accessibility, screen-reader and exhaustive browser automation parity remain.
+  [KEYBINDINGS.md](KEYBINDINGS.md) tracks all 169 shortcut actions: 95 have Windows
+  handlers, while 74 require missing platform features. Single bindings, chords,
+  numbered families, unbinding, live JSONC overrides and boolean context guards
+  are supported. Advanced macOS predicates and Ghostty copy-mode parity remain.
 - The distributable is unsigned. The full dependency audit retains eight
   moderate findings in the electron-builder download/proxy toolchain through
   `sprintf-js`; the production dependency audit reports zero vulnerabilities.

@@ -143,6 +143,7 @@ import {
 } from "./pane-tree.js";
 import { canLoadImage } from "./image-utils.js";
 import { formatMessage, t } from "./i18n.js";
+import {installWindowsShortcuts} from './windows-shortcuts.mjs';
 import {
   safeReleasePointerCapture,
   safeSetPointerCapture
@@ -12291,6 +12292,10 @@ function paneRenderSignature(workspace, visiblePanels, tree) {
     appendSignatureValue(nextParts, panel.id);
     appendSignatureValue(nextParts, panel.type);
     appendSignatureValue(nextParts, panelDisplayTitle(panel, false));
+    for (const member of paneTabGroups.members(workspace, panel.id)) {
+      appendSignatureValue(nextParts, member.id);
+      appendSignatureValue(nextParts, panelDisplayTitle(member,false));
+    }
     appendSignatureValue(nextParts, panel.title || "");
     appendSignatureValue(nextParts, panel.titleLocked || false);
     appendSignatureValue(nextParts, panel.color || "");
@@ -12473,6 +12478,7 @@ function updatePaneChromeState(pane, panel, workspace) {
   setTitleIfChanged(parts.title, title);
   setTitleIfChanged(parts.header, `${title} - drag header to move, double-click to rename`);
   syncTerminalSessionPanelState(panel);
+  renderPaneTabStrip(pane,panel,workspace);
 }
 
 function updatePaneTypeBadge(badge, type) {
@@ -12494,7 +12500,6 @@ function renderPaneNode(panel, workspace, visibleCount) {
   const parts = paneParts(pane);
   setDatasetIfChanged(pane, "panelId", panel.id);
   updatePaneChromeState(pane, panel, workspace);
-  renderPaneTabStrip(pane, panel, workspace);
   toggleClassIfChanged(pane, "is-active", panel.id === workspace.activePanelId);
   const zoomed = isPanelZoomed(panel, workspace);
   const minimized = isPanelMinimized(panel);
@@ -16810,6 +16815,7 @@ function renderSettingsInspector(options = {}) {
 
   if (shouldBuildSection("actions")) {
     const actionsSection = settingsSection("Actions", "commands shortcuts keyboard palette run tools");
+    actionsSection.append(windowsShortcuts.settingsButton());
     actionsSection.append(settingsActionsOverviewPanel());
     actionsSection.append(actionWorkflowGrid());
     actionsSection.append(settingsCommandGroupShortcutGrid());
@@ -41527,7 +41533,7 @@ function paletteEntries() {
   for (const [id, label] of settingsCategories.filter(([id]) => id !== "all" && !commandIds.has(`settings.${id}`))) {
     entries.push(settingsCategoryPaletteState(id, label));
   }
-  return entries;
+  return state.paletteWorkspaceOnly ? entries.filter(entry => (state.data?.workspaces || []).some(workspace => entry.id === `workspace.${workspace.id}`)) : entries;
 }
 
 function cancelPaletteFocus() {
@@ -41556,6 +41562,7 @@ function openPalette() {
 
 function closePalette() {
   state.paletteOpen = false;
+  state.paletteWorkspaceOnly = false;
   cancelPaletteFocus();
   resetPaletteEntriesCache();
   elements.paletteList.scrollTop = 0;
@@ -42684,6 +42691,12 @@ function optimisticUpdatePanel(panelId, updates = {}, options = {}) {
   if (Object.hasOwn(updates, "terminalFontSize") && found.panel.type === "terminal") {
     found.panel.terminalFontSize = normalizeTerminalFontSize(updates.terminalFontSize, 0);
   }
+  if(typeof updates.needsAttention === 'boolean') {
+    found.panel.needsAttention=updates.needsAttention;
+    found.panel.notificationOrder=updates.needsAttention?Date.now():0;
+    if(!updates.needsAttention)found.panel.notificationText='';
+  }
+  if(updates.notificationOrder===0 && found.panel.needsAttention)found.panel.notificationOrder=0;
   if (updates.direction === "down" || updates.direction === "right") {
     panelWorkspace.splitDirection = updates.direction;
   }
@@ -43221,6 +43234,7 @@ async function focusPanel(panelId) {
   }
   const shouldShowPaneHud = Boolean(found && (!wasAlreadyFocused || wasMinimized || zoomChanged));
   if (wasAlreadyFocused) {
+    if(found.panel.needsAttention)queueFocusSync({type:'panel',panelId});
     const shouldInitTerminal = requestImmediateTerminalInit(panelId);
     if (wasMinimized || zoomChanged) render();
     else if (shouldInitTerminal) scheduleRender();
@@ -45604,115 +45618,20 @@ elements.paletteInput.addEventListener("keydown", (event) => {
   }
 });
 
-window.addEventListener("keydown", (event) => {
-  const key = event.key.toLowerCase();
-  if (state.activeDialog) return;
-  const editingText = isFormEditableTarget(event.target);
-  if (event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && (event.key === "," || event.code === "Comma")) {
-    consumeGlobalShortcut(event);
-    openInspector("settings");
-    return;
-  }
-  const textSizeShortcutKind = paneTextSizeShortcutKind(event);
-  const directBrowserPanel = textSizeShortcutKind ? resolveBrowserPanel(panelFromEvent(event)) : null;
-  if (
-    textSizeShortcutKind
-    && (!editingText || directBrowserPanel)
-    && handlePaneTextSizeKeyShortcut(event, textSizeShortcutKind)
-  ) return;
+// Supplemental Windows terminal editing keys. App-owned bindings use the
+// shared registry below; no legacy handler may bypass rebinding.
+function handleSupplementalWindowsKeys(event) {
+  if (event.defaultPrevented || state.activeDialog || document.querySelector('.shortcut-dialog[open]')) return;
   if (event.key === "Escape" && state.contextMenu && !state.contextMenu.hidden) {
-    consumeGlobalShortcut(event);
-    hideContextMenu();
-    return;
+    consumeGlobalShortcut(event); hideContextMenu(); return;
   }
-  if (editingText) return;
-  if (event.ctrlKey && event.shiftKey && key === "f") {
-    consumeGlobalShortcut(event);
-    toggleFocusMode();
-  } else if (event.ctrlKey && key === "f") {
-    runTerminalKeyShortcut(event, openTerminalSearch);
-  } else if (event.ctrlKey && event.shiftKey && event.key === "Enter") {
-    runTerminalKeyShortcut(event, promptRunTerminalCommand);
-  } else if (event.ctrlKey && key === "tab") {
-    consumeGlobalShortcut(event);
-    cycleActivePane(event.shiftKey ? -1 : 1);
-  } else if (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && key === "backspace") {
-    consumeGlobalShortcut(event);
-    focusLastPane();
-  } else if (event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && /^[1-9]$/.test(event.key)) {
-    consumeGlobalShortcut(event);
-    focusPaneByOrdinal(Number(event.key));
-  } else if (event.ctrlKey && event.altKey && !event.shiftKey && !event.metaKey && /^[1-9]$/.test(event.key)) {
-    consumeGlobalShortcut(event);
-    focusWorkspaceByOrdinal(Number(event.key));
-  } else if (event.ctrlKey && event.altKey && !event.shiftKey && !event.metaKey && key === "backspace") {
-    consumeGlobalShortcut(event);
-    focusLastWorkspace();
-  } else if (event.ctrlKey && event.key === "PageDown") {
-    consumeGlobalShortcut(event);
-    cycleWorkspace(1);
-  } else if (event.ctrlKey && event.key === "PageUp") {
-    consumeGlobalShortcut(event);
-    cycleWorkspace(-1);
-  } else if (event.key === "F3") {
-    runTerminalKeyShortcut(event, event.shiftKey ? findPreviousInTerminal : findNextInTerminal);
-  } else if (event.ctrlKey && event.shiftKey && key === "c") {
-    runTerminalKeyShortcut(event, copyActiveTerminalSelection);
-  } else if (event.ctrlKey && event.shiftKey && key === "v") {
-    runTerminalKeyShortcut(event, pasteClipboardToTerminal);
-  } else if (event.ctrlKey && event.shiftKey && key === "p") {
-    consumeGlobalShortcut(event);
-    if (state.paletteOpen) closePalette();
-    else openPalette();
-  } else if (event.ctrlKey && key === "n") {
-    consumeGlobalShortcut(event);
-    createWorkspace();
-  } else if (event.ctrlKey && event.shiftKey && key === "t") {
-    consumeGlobalShortcut(event);
-    reopenClosedPanel();
-  } else if (event.ctrlKey && key === "t") {
-    consumeGlobalShortcut(event);
-    createTerminalPanel();
-  } else if (event.ctrlKey && event.shiftKey && key === "l") {
-    consumeGlobalShortcut(event);
-    openBrowserHome();
-  } else if (event.ctrlKey && key === "l") {
-    const panel = keyboardPanelFromEvent(event);
-    if (resolveBrowserPanel(panel)) {
-      consumeGlobalShortcut(event);
-      focusBrowserAddress(panel);
-    }
-  } else if (event.ctrlKey && !event.shiftKey && key === "r") {
-    const panel = keyboardPanelFromEvent(event);
-    if (resolveBrowserPanel(panel)) {
-      consumeGlobalShortcut(event);
-      reloadBrowserPanel(panel);
-    }
-  } else if (event.altKey && event.key === "ArrowLeft") {
-    if (navigateBrowserHistory(-1, keyboardPanelFromEvent(event))) consumeGlobalShortcut(event);
-  } else if (event.altKey && event.key === "ArrowRight") {
-    if (navigateBrowserHistory(1, keyboardPanelFromEvent(event))) consumeGlobalShortcut(event);
-  } else if (event.ctrlKey && key === "i") {
-    consumeGlobalShortcut(event);
-    openInspector("notifications");
-  } else if (event.ctrlKey && key === "b") {
-    consumeGlobalShortcut(event);
-    toggleSidebar();
-  } else if (event.ctrlKey && key === "k") {
-    runTerminalKeyShortcut(event, clearTerminalPanel);
-  } else if (event.ctrlKey && event.shiftKey && key === "r") {
-    runTerminalKeyShortcut(event, (panel) => restartPanel(panel.id));
-  } else if (event.ctrlKey && event.shiftKey && key === "m") {
-    consumeGlobalShortcut(event);
-    togglePaneZoom(keyboardPanelFromEvent(event)?.id);
-  } else if (event.ctrlKey && key === "w") {
-    const panel = keyboardPanelFromEvent(event);
-    if (panel) {
-      consumeGlobalShortcut(event);
-      closePanel(panel.id);
-    }
-  }
-}, true);
+  if (isFormEditableTarget(event.target)) return;
+  const textSizeKind = paneTextSizeShortcutKind(event);
+  if (textSizeKind && terminalPanelForShortcutEvent(event) && handlePaneTextSizeKeyShortcut(event,textSizeKind)) return;
+  if(event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase()==='k') {runTerminalKeyShortcut(event,clearTerminalPanel);return;}
+  if (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase()==='c') runTerminalKeyShortcut(event,copyActiveTerminalSelection);
+  else if (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey && event.key.toLowerCase()==='v') runTerminalKeyShortcut(event,pasteClipboardToTerminal);
+}
 
 window.addEventListener("wheel", handleWindowWheelZoom, { passive: false, capture: true });
 window.addEventListener("resize", () => scheduleVisibleBrowserViewBoundsSync(browserViewBoundsSyncFrames), { passive: true });
@@ -45857,8 +45776,29 @@ if (window.cmuxNative?.onWindowState) {
   window.cmuxNative.onWindowState((windowState) => updateMaximizeButton(Boolean(windowState.maximized)));
 }
 
+const windowsShortcuts = installWindowsShortcuts({
+  state,elements,commands,paneTabGroups,focusedPanel,activePanel,activeWorkspace,
+  updatePanel,updatePanels,
+  isFormEditableTarget,isPanelMinimized,focusPanel,findPanelState,render,
+  paneTreeForWorkspace,replacePaneTreePanelId,removePanelFromPaneTree,savePaneTreeLayouts,
+  setPaneSplitterPercent,moveWorkspaceRelative,browserZoomOptions,updateSettings,
+  showTextDialog,findLabel:t('menu.findTerminal','Find'),copyActiveTerminalSelection,
+  openSettingsCategory,createWorkspace,toggleSidebar,saveCurrentWorkspaceBlueprint,
+  createWorkspaceFromFolder,openPalette,closePalette,movePaletteSelection,openInspector,
+  allAttentionPanels,cycleWorkspace,focusWorkspaceByOrdinal,renameActivePanel,
+  focusWorkspace,
+  renameActiveWorkspace,closePanel,closeActiveWorkspace,closePanelsById,reopenClosedPanel,
+  createTerminalPanel,focusLastPane,splitActivePanel,togglePaneZoom,sendTerminalInput,
+  scheduleFitTerminal,changePaneTerminalFontSize,resetPaneTerminalFontSize,openBrowserHome,
+  focusBrowserAddress,navigateBrowserHistory,reloadBrowserPanel,openTerminalSearch,
+  findNextInTerminal,findPreviousInTerminal,closeTerminalSearch,terminalSearchInput
+});
+window.addEventListener('keydown',handleSupplementalWindowsKeys,true);
+commands.push(...windowsShortcuts.actionEntries());
+
 if (window.cmuxNative?.onCommand) {
   window.cmuxNative.onCommand((commandId) => {
+    if (windowsShortcuts.runMenu(commandId)) return;
     if (commandId === "palette.toggle") {
       if (state.paletteOpen) closePalette();
       else openPalette();

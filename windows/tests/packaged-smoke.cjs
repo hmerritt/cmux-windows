@@ -14,8 +14,8 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
   const port = lease.address().port;
   await new Promise(resolve => lease.close(resolve));
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'cmux-packaged-test-'));
-  const binary = path.resolve(__dirname, '../release/win-unpacked/cmux.exe');
-  const env = {...process.env, APPDATA:profile, CMUX_WINDOWS_PIPE:`\\\\.\\pipe\\cmux-packaged-test-${process.pid}`};
+  const binary = process.env.CMUX_TEST_BINARY || path.resolve(__dirname, '../release/win-unpacked/cmux.exe');
+  const env = {...process.env, APPDATA:profile, CMUX_WINDOWS_CONFIG:path.join(profile,'cmux.json'), CMUX_WINDOWS_PIPE:`\\\\.\\pipe\\cmux-packaged-test-${process.pid}`};
   delete env.ELECTRON_RUN_AS_NODE;
   const child = spawn(binary, [`--user-data-dir=${path.join(profile,'electron')}`, `--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1'], {env, windowsHide:true, stdio:'ignore'});
   const exited = new Promise(resolve => child.once('exit', resolve));
@@ -94,12 +94,23 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
       await delay(100);
     }
     assert(rendered,'Packaged ConPTY must execute a command and render its output');
+    const paneCount=await evaluate("document.querySelectorAll('.pane').length");
+    await evaluate("document.querySelector('.xterm-helper-textarea').focus()");
+    await call('Input.dispatchKeyEvent',{type:'keyDown',key:'d',code:'KeyD',windowsVirtualKeyCode:68,modifiers:2});
+    await call('Input.dispatchKeyEvent',{type:'keyUp',key:'d',code:'KeyD',windowsVirtualKeyCode:68,modifiers:2});
+    let split=false;
+    for(let i=0;i<100;i++) {
+      split=await evaluate(`document.querySelectorAll('.pane').length===${paneCount+1}`);
+      if(split)break;
+      await delay(100);
+    }
+    assert(split,'Packaged Ctrl+D must create a split through the shipped shortcut module');
     const screenshot=await call('Page.captureScreenshot',{format:'png'});
     fs.mkdirSync(path.resolve(__dirname,'../test-output'),{recursive:true});
     fs.writeFileSync(path.resolve(__dirname,'../test-output/packaged.png'),Buffer.from(screenshot.data,'base64'));
     await evaluate('window.cmuxNative.closeWindow()');
     await Promise.race([exited,delay(10000).then(()=>{throw new Error('Packaged app did not close');})]);
-    console.log('PASS packaged cmux.exe: native ConPTY, workspace creation, command execution, rendered output, clean close');
+    console.log('PASS packaged cmux.exe: native ConPTY, workspace creation, command execution, rendered output, keyboard split, clean close');
   } finally {
     socket?.close();
     if(child.exitCode===null) {

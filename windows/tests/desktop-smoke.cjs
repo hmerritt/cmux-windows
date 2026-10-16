@@ -9,6 +9,7 @@ const http = require('node:http');
 
 const profile = process.env.CMUX_DESKTOP_TEST_PROFILE || fs.mkdtempSync(path.join(os.tmpdir(), 'cmux-desktop-test-'));
 process.env.APPDATA = profile;
+process.env.CMUX_WINDOWS_CONFIG = path.join(profile,'cmux.json');
 process.env.CMUX_WINDOWS_PIPE = `\\\\.\\pipe\\cmux-desktop-test-${process.pid}`;
 app.setPath('userData', path.join(profile, 'electron'));
 const output = path.resolve(__dirname, '..', 'test-output');

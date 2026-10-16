@@ -6,6 +6,11 @@ chrome follows the macOS source metrics and repository screenshots. See
 [PARITY.md](PARITY.md) for verified behavior and remaining differences, and
 [UPSTREAM.md](UPSTREAM.md) for the implementation's provenance.
 
+Keyboard shortcuts are listed in [KEYBINDINGS.md](KEYBINDINGS.md). Use Settings >
+Actions > Keyboard Shortcuts to edit bindings, or change
+`~/.config/cmux/cmux.json`; changes apply live. The complete registry is visible,
+with actions for features absent from the Windows port marked unavailable.
+
 ## Run
 
 ```powershell
@@ -90,6 +95,7 @@ Requires Windows x64 and Node.js 24 (the version used for validation).
 npm ci
 npm run build:renderer
 npm test
+npm run test:shortcuts
 npm run smoke
 npm run test:desktop
 npm run pack:win

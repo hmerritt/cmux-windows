@@ -3,6 +3,12 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 contextBridge.exposeInMainWorld("cmuxNative", {
   electron: true,
   platform: process.platform,
+  getShortcuts: () => ipcRenderer.invoke('shortcuts:get'),
+  updateShortcut: (id,value,reset=false) => ipcRenderer.invoke('shortcuts:update',id,value,reset),
+  reloadShortcuts: () => ipcRenderer.invoke('shortcuts:reload'),
+  nativeShortcut: (action,guestId) => ipcRenderer.invoke('shortcut:native',action,guestId),
+  onShortcut(callback) { ipcRenderer.on('cmux-shortcut',(_event,value)=>callback(value)); },
+  onShortcutsChanged(callback) { ipcRenderer.on('cmux-shortcuts-changed',(_event,value)=>callback(value)); },
   onCommand(callback) {
     ipcRenderer.on("cmux-command", (_event, command) => callback(command));
   },

@@ -6,6 +6,23 @@ const os = require("node:os");
 const path = require("node:path");
 const readline = require("node:readline");
 const { formatMessage, t } = require("./i18n.cjs");
+const {ShortcutConfig} = require('./shortcut-config.cjs');
+const {ShortcutRouter, catalog} = require('../renderer/shortcut-engine.mjs');
+const {actionAvailable, actionPriority} = require('../renderer/shortcut-scopes.mjs');
+const separateWindow = process.argv.find(value=>value.startsWith('--cmux-window-id='))?.split('=')[1];
+if (separateWindow && /^[a-f0-9-]+$/.test(separateWindow)) {
+  app.setPath('userData', path.join(app.getPath('appData'),'cmux-windows',separateWindow));
+  process.env.CMUX_WINDOWS_PIPE = `\\\\.\\pipe\\cmux-windows-${separateWindow}`;
+  process.env.CMUX_WINDOWS_DATA_DIR = app.getPath('userData');
+}
+const shortcutConfig = new ShortcutConfig();
+const guestShortcutRouter = new ShortcutRouter([...catalog].sort((a,b)=>actionPriority(a.id)-actionPriority(b.id)));
+guestShortcutRouter.configure(shortcutConfig.settings);
+function publishShortcutSnapshot(snapshot) {
+  if(!snapshot.error) guestShortcutRouter.configure(snapshot.settings);
+  mainWindow?.webContents.send('cmux-shortcuts-changed',snapshot);
+  return snapshot;
+}
 
 let mainWindow = null;
 let runtimeChild = null;
@@ -15,6 +32,7 @@ let windowResizeSession = null;
 const zoomLockedContents = new WeakSet();
 const navigationGuardedContents = new WeakSet();
 const commandShortcutContents = new WeakSet();
+const browserGuestOwners = new WeakMap();
 
 const appRoot = path.resolve(__dirname, "..");
 const appName = "cmux";
@@ -76,19 +94,24 @@ function sendCmuxCommand(commandId) {
   mainWindow.webContents.send("cmux-command", commandId);
 }
 
-function isSettingsShortcutInput(input) {
-  if (!input || input.type !== "keyDown") return false;
-  if (!input.control || input.shift || input.alt || input.meta) return false;
-  return input.key === "," || input.code === "Comma";
-}
-
 function installCommandShortcutBridge(contents) {
   if (!contents || commandShortcutContents.has(contents)) return;
   commandShortcutContents.add(contents);
+  let altGraph=false;
+  contents.on('blur',()=>{altGraph=false;guestShortcutRouter.pending=null;});
   contents.on("before-input-event", (event, input) => {
-    if (!isSettingsShortcutInput(input)) return;
+    if(input.code==='AltRight' || input.key==='AltGraph') {
+      altGraph=input.type==='keyDown' && (input.key==='AltGraph' || input.control);
+      guestShortcutRouter.pending=null;
+    }
+    // Host renderer owns terminal/input contexts. Guests cannot bubble keys to
+    // it, so use the same matcher here and forward only recognized app actions.
+    if (browserGuestOwners.get(contents)!==mainWindow?.webContents || input.type!=='keyDown' || altGraph) return;
+    const context={browserFocus:true,terminalFocus:false,appFocus:true,sidebarFocus:false,commandPaletteVisible:false};
+    const result=guestShortcutRouter.handle({key:input.key,code:input.code,ctrlKey:input.control,altKey:input.alt,shiftKey:input.shift,metaKey:input.meta,repeat:input.isAutoRepeat,isComposing:input.isComposing},context,actionAvailable);
+    if(!result) return;
     event.preventDefault();
-    sendCmuxCommand("settings.open");
+    if(result.id) mainWindow?.webContents.send('cmux-shortcut',{...result,guestId:contents.id});
   });
 }
 
@@ -174,6 +197,7 @@ function attachWebviewHardening(contents) {
     }
   });
   contents.on("did-attach-webview", (_event, webContents) => {
+    browserGuestOwners.set(webContents,contents);
     hardenWebContents(webContents);
     guardWebviewNavigation(webContents);
     installCommandShortcutBridge(webContents);
@@ -525,7 +549,7 @@ async function startRuntime() {
 }
 
 function buildMenu() {
-  return Menu.buildFromTemplate([
+  const template = [
     {
       label: t("menu.file"),
       submenu: [
@@ -586,7 +610,16 @@ function buildMenu() {
         { role: "toggleDevTools" }
       ]
     }
-  ]);
+  ];
+  // All keyboard dispatch belongs to the context-aware router. Menu accelerators
+  // previously bypassed rebinding and could fire a second conflicting action.
+  function clearAccelerators(items) { for(const item of items) {
+    if(item.role && !['undo','redo','cut','copy','paste','selectAll'].includes(item.role)) item.accelerator='';
+    else delete item.accelerator;
+    if(item.submenu) clearAccelerators(item.submenu);
+  } }
+  clearAccelerators(template);
+  return Menu.buildFromTemplate(template);
 }
 
 async function createWindow() {
@@ -670,6 +703,34 @@ if (!hasLock) {
     mainWindow?.close();
     return true;
   }, false));
+  ipcMain.handle('shortcuts:get', trustedIpcHandler(()=>shortcutConfig.snapshot(),null));
+  ipcMain.handle('shortcuts:update', trustedIpcHandler((_event,id,value,reset)=>publishShortcutSnapshot(shortcutConfig.update(id,value,reset)),null));
+  ipcMain.handle('shortcuts:reload', trustedIpcHandler(()=>publishShortcutSnapshot(shortcutConfig.reload()),null));
+  ipcMain.handle('shortcut:native', trustedIpcHandler(async (_event,action,guestId)=>{
+    if(action==='quit') { app.quit(); return true; }
+    if(action==='closeWindow') { mainWindow?.close(); return true; }
+    if(action==='toggleFullScreen') { mainWindow?.setFullScreen(!mainWindow.isFullScreen()); return true; }
+    if(action==='newWindow') {
+      const id=require('node:crypto').randomUUID();
+      const args=app.isPackaged?[]:[appRoot];
+      const child=spawn(process.execPath,[...args,`--cmux-window-id=${id}`],{detached:true,stdio:'ignore',windowsHide:true,env:{...process.env,ELECTRON_RUN_AS_NODE:''}});
+      child.unref(); return true;
+    }
+    const guest=Number.isInteger(guestId)?require('electron').webContents.fromId(guestId):null;
+    if(!guest || browserGuestOwners.get(guest)!==mainWindow?.webContents) return false;
+    if(action==='browserHardReload') guest.reloadIgnoringCache();
+    else if(action==='toggleBrowserDeveloperTools') guest.isDevToolsOpened()?guest.closeDevTools():guest.openDevTools({mode:'detach'});
+    else if(action==='showBrowserJavaScriptConsole') {
+      if(!guest.isDevToolsOpened()) {
+        await new Promise(resolve=>{guest.once('devtools-opened',resolve);guest.openDevTools({mode:'detach',activate:true});});
+      }
+      await guest.devToolsWebContents.executeJavaScript("DevToolsAPI.showPanel('console')");
+    }
+    else if(action==='hideFind') guest.stopFindInPage('clearSelection');
+    else return false;
+    return true;
+  },false));
+  shortcutConfig.watch(publishShortcutSnapshot);
   ipcMain.handle("window:is-maximized", trustedIpcHandler(() => Boolean(mainWindow?.isMaximized()), false));
   ipcMain.on("window:begin-resize", trustedIpcListener((_event, edge, point) => beginWindowResize(edge, point)));
   ipcMain.on("window:resize", trustedIpcListener((_event, point) => continueWindowResize(point)));
@@ -732,5 +793,5 @@ if (!hasLock) {
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
   });
-  app.on("before-quit", stopRuntime);
+  app.on("before-quit", () => { shortcutConfig.close(); stopRuntime(); });
 }
