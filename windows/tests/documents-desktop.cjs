@@ -136,6 +136,7 @@ app.once('browser-window-created',(_event,win)=>{
       await waitFor("!document.querySelector('.diff-word-change')");
       fs.mkdirSync(path.resolve(__dirname,'../test-output'),{recursive:true});
       fs.writeFileSync(path.resolve(__dirname,'../test-output/documents.png'),(await win.webContents.capturePage()).toPNG());
+      assert(await evaluate("!!document.querySelector('select[data-diff-source]')"),'Diff pane must offer staged, unstaged and branch sources');
       console.log('PASS Git diff: real changes, viewed marks, navigation/search, split/unified layouts, line numbers, word diffs, context, indicators and persisted display preferences');
     }catch(error){failed=true;console.error(error.stack||error);}
     finally{clearTimeout(deadline);win.destroy();app.quit();}

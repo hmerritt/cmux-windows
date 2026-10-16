@@ -78,3 +78,46 @@ test('oversized full context falls back visibly while keeping bounded compact di
     assert(expanded.unstaged.includes('+changed first line'));assert(expanded.unstaged.length<10000);
   }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+
+test('diff sources isolate index and worktree and compare branches from the merge base',async()=>{
+  const {WorkspaceGit}=require('../src/workspace-git.cjs');
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'cmux-git-sources-'));
+  const git=(...args)=>execFileSync('git',['-C',root,...args],{windowsHide:true,stdio:'pipe'}).toString();
+  try {
+    git('init','-b','main');git('config','user.name','Test');git('config','user.email','test@example.invalid');
+    for(const name of ['both.txt','index.txt','work.txt','gone.txt','old.txt'])await fs.writeFile(path.join(root,name),'original\n');
+    git('add','.');git('commit','-m','Base');const base=git('rev-parse','HEAD').trim();
+    git('checkout','-b','feature');
+    await fs.writeFile(path.join(root,'committed.txt'),'feature commit\n');
+    git('rm','gone.txt');git('mv','old.txt','renamed.txt');git('add','.');git('commit','-m','Feature');
+    git('checkout','main');await fs.writeFile(path.join(root,'upstream.txt'),'upstream only\n');git('add','.');git('commit','-m','Upstream');git('checkout','feature');
+    await fs.writeFile(path.join(root,'both.txt'),'index content\n');await fs.writeFile(path.join(root,'index.txt'),'index only\n');git('add','.');
+    await fs.writeFile(path.join(root,'both.txt'),'worktree content\n');await fs.writeFile(path.join(root,'work.txt'),'worktree only\n');
+    await fs.writeFile(path.join(root,'untracked.txt'),'new file\n');
+    const viewer=new WorkspaceGit();
+    const staged=await viewer.status(root,{source:'staged'}),unstaged=await viewer.status(root,{source:'unstaged'});
+    assert.deepEqual(staged.entries.map(e=>e.path).sort(),['both.txt','index.txt'],'Staged must exclude working-only and untracked files');
+    assert.deepEqual(unstaged.entries.map(e=>e.path).sort(),['both.txt','untracked.txt','work.txt']);
+    const indexPatch=await viewer.diff(root,'both.txt',{source:'staged'}),workPatch=await viewer.diff(root,'both.txt',{source:'unstaged'});
+    assert.match(indexPatch.staged,/\+index content/);assert.equal(indexPatch.unstaged,'');
+    assert.equal(workPatch.staged,'');assert.match(workPatch.unstaged,/-index content\n\+worktree content/);
+    await assert.rejects(viewer.diff(root,'index.txt',{source:'unstaged'}),/unknown_file/);
+    const branch=await viewer.status(root,{source:'branch',base:'main'});
+    assert.equal(branch.baseRef,'main');assert.equal(branch.mergeBase,base);
+    assert(branch.entries.some(e=>e.path==='committed.txt') && branch.entries.some(e=>e.path==='gone.txt'));
+    assert(!branch.entries.some(e=>['upstream.txt','untracked.txt'].includes(e.path)),'Branch diff uses the merge base and native tracked-file semantics');
+    assert.equal(branch.entries.find(e=>e.path==='renamed.txt').originalPath,'old.txt');
+    const branchPatch=await viewer.diff(root,'both.txt',{source:'branch',base:'main'});
+    assert.match(branchPatch.branch,/-original\n\+worktree content/);assert.equal(branchPatch.staged,'');assert.equal(branchPatch.unstaged,'');
+    assert.notEqual(branchPatch.revision,workPatch.revision);
+    assert.match((await viewer.diff(root,'gone.txt',{source:'branch',base:'main'})).branch,/--- a\/gone.txt/);
+    assert.equal((await viewer.diff(root,'both.txt',{source:'branch',base:'main',expandUnchanged:true})).revision,branchPatch.revision);
+    assert.equal((await viewer.status(root,{source:'branch'})).baseRef,'main');
+    git('config','branch.feature.cmuxBase',base);assert.equal((await viewer.status(root,{source:'branch'})).baseRef,base);
+    await assert.rejects(viewer.status(root,{source:'branch',base:'--output=escape'}),/invalid_base/);
+    await assert.rejects(viewer.status(root,{source:'branch',base:'missing'}),/invalid_base/);
+    await assert.rejects(viewer.status(root,{source:'unsupported'}),/invalid_source/);
+    assert.equal(git('diff','--cached','--name-only').trim().split(/\r?\n/).length,2,'Viewing must leave the index unchanged');
+  }finally{await fs.rm(root,{recursive:true,force:true});}
+});
