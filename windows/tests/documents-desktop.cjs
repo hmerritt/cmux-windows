@@ -105,6 +105,17 @@ app.once('browser-window-created',(_event,win)=>{
       assert(await evaluate("getComputedStyle(document.querySelector('.diff-added')).backgroundColor==='rgba(0, 0, 0, 0)'"),'Background toggle affects rendered additions');
       await evaluate("document.querySelector('[data-diff-layout=unified]').click()");
       await waitFor("document.querySelectorAll('.diff-unified-row').length>0 && [...document.querySelectorAll('.diff-pane')].every(pane=>pane.dataset.diffLayout==='unified')");
+      assert(await evaluate("!!document.querySelector('[data-diff-option=wordDiffs]') && !!document.querySelector('[data-diff-option=expandUnchanged]')"),'Native word-diff and context controls must be available');
+      await evaluate("document.querySelector('[data-git-path=\"second.txt\"]').click()");
+      await waitFor("document.querySelector('.diff-patch').textContent.includes('+Changed 3')");
+      await evaluate("document.querySelector('[data-diff-option=wordDiffs]').click()");
+      await waitFor("!!document.querySelector('.diff-word-change')");
+      assert(await evaluate("[...document.querySelectorAll('.diff-word-change')].some(node=>node.textContent==='Changed')"),'Only replaced words are highlighted');
+      await evaluate("document.querySelector('[data-diff-option=expandUnchanged]').click()");
+      await waitFor("document.querySelector('.diff-patch').textContent.includes('Line 25')");
+      await evaluate("const selector=document.querySelector('[data-diff-indicators]');selector.value='classic';selector.dispatchEvent(new Event('change',{bubbles:true}))");
+      await waitFor("[...document.querySelectorAll('.diff-pane')].every(pane=>pane.dataset.diffIndicators==='classic')");
+      assert(await evaluate("getComputedStyle(document.querySelector('.diff-sign')).display!=='none'"),'Classic indicators show the patch signs');
       fs.mkdirSync(path.resolve(__dirname,'../test-output'),{recursive:true});
       fs.writeFileSync(path.resolve(__dirname,'../test-output/documents.png'),(await win.webContents.capturePage()).toPNG());
       console.log('PASS Git diff: real changes, viewed marks, navigation/search, split/unified layouts, line numbers and persisted display preferences');

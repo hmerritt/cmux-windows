@@ -35,3 +35,23 @@ test('Git viewer lists staged, working, renamed and untracked paths and never ru
     assert.equal(git('status','--porcelain').includes('notes.md'),true,'Viewer must leave Git state unchanged');
   }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('expanded diff context includes unchanged lines without changing file review identity',async()=>{
+  const {WorkspaceGit}=require('../src/workspace-git.cjs');
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'cmux-git-context-'));
+  const git=(...args)=>execFileSync('git',['-C',root,...args],{windowsHide:true,stdio:'pipe'});
+  try {
+    git('init');git('config','user.name','Test');git('config','user.email','test@example.invalid');
+    const original=Array.from({length:60},(_,i)=>`unchanged ${i}`);
+    await fs.writeFile(path.join(root,'context.txt'),original.join('\n')+'\n');git('add','.');git('commit','-m','Fixture');
+    const changed=[...original];changed[4]='first change';changed[50]='second change';
+    await fs.writeFile(path.join(root,'context.txt'),changed.join('\n')+'\n');
+    const viewer=new WorkspaceGit(),collapsed=await viewer.diff(root,'context.txt');
+    assert(!collapsed.unstaged.includes('unchanged 25'));
+    const expanded=await viewer.diff(root,'context.txt',{expandUnchanged:true});
+    assert(expanded.unstaged.includes('unchanged 25'),'Expanded context must include the unchanged middle of the file');
+    assert.equal(expanded.revision,collapsed.revision,'Display preferences cannot invalidate a viewed file');
+    assert(expanded.unstaged.includes('unchanged 0') && expanded.unstaged.includes('unchanged 59'));
+    assert.equal(git('diff','--cached').length,0,'Context expansion must not alter the index');
+  }finally{await fs.rm(root,{recursive:true,force:true});}
+});
