@@ -3,15 +3,17 @@ import {parityText} from './parity-messages.mjs';
 import {catalog} from './shortcut-engine.mjs';
 import {actionLabel} from './shortcut-ui.mjs';
 
-export function createWorkspaceFileExplorer({openMarkdown}={}) {
+export function createWorkspaceFileExplorer({openMarkdown,prompt,onRename,beforeRename}={}) {
   let root='',relative='',host=null,generation=0,selected=null,entries=[],loading=false,pendingFocus=false;
   let canLeave=()=>true;
+  let mutating=false,renameButton=null;
   const label=actionLabel(catalog.find(action=>action.id==='switchRightSidebarToFiles'));
   function button(text,run) {const node=document.createElement('button');node.type='button';node.textContent=text;node.onclick=run;return node;}
   function message(key) {const node=document.createElement('p');node.setAttribute('role','status');node.textContent=parityText(key);return node;}
   function select(index) {
     if(!entries.length)return;
     selected=Math.max(0,Math.min(entries.length-1,index));
+    if(renameButton)renameButton.disabled=false;
     for(const [i,node] of [...host.querySelectorAll('[role=treeitem]')].entries()) {
       node.setAttribute('aria-selected',String(i===selected));node.tabIndex=i===selected?0:-1;
       if(i===selected)node.focus();
@@ -46,7 +48,33 @@ export function createWorkspaceFileExplorer({openMarkdown}={}) {
     } else {preview.append(message(['binary_file','file_too_large'].includes(result?.error)?'previewLimit':'pathError'));host.append(preview);}
   }
   function showError(key) {host?.replaceChildren(message(key),button(parityText('refresh'),()=>load(relative)));}
-  async function load(next='') {
+  function mutationStatus(key) {
+    host.querySelector('.workspace-file-mutation-status')?.remove();
+    const status=message(key);status.className='workspace-file-mutation-status';host.prepend(status);
+  }
+  async function mutate(kind) {
+    if(mutating || !prompt || !canLeave())return;
+    const entry=entries[selected],requestedRoot=root,parent=relative,request=generation;
+    if(kind==='rename' && !entry)return;
+    const title=parityText(kind==='rename'?'renameEntry':kind==='folder'?'newFolder':'newFile');
+    const name=await prompt({title,value:kind==='rename'?entry.name:'',confirmLabel:parityText(kind==='rename'?'renameEntry':'createEntry'),cancelLabel:parityText('cancel')});
+    if(name===null || requestedRoot!==root || request!==generation)return;
+    if(kind==='rename')try{beforeRename?.(requestedRoot,entry.path,entry.path.slice(0,-entry.name.length)+name);}catch{mutationStatus('draftError');return;}
+    mutating=true;
+    try {
+      const result=kind==='rename'?await window.cmuxNative.renameWorkspaceEntry(root,entry.path,name):await window.cmuxNative.createWorkspaceEntry(root,parent,name,kind);
+      if(requestedRoot!==root || request!==generation)return;
+      if(!result?.ok){mutationStatus(result?.error==='entry_exists'?'entryExists':result?.error==='invalid_name'?'invalidName':'mutationError');return;}
+      const preview=kind==='file' || (kind==='rename' && !entry.directory && Boolean(host.querySelector('.workspace-file-preview')));
+      let syncError=false;
+      if(kind==='rename')try{await onRename?.(requestedRoot,entry.path,result.path);}catch{syncError=true;}
+      if(requestedRoot!==root)return;
+      await load(parent,{selectPath:result.path,preview});
+      if(syncError)mutationStatus('draftError');
+    }catch{if(requestedRoot===root)mutationStatus('mutationError');}
+    finally{mutating=false;}
+  }
+  async function load(next='',{selectPath=null,preview=false}={}) {
     if(!canLeave())return;
     const request=++generation,requestedRoot=root;
     relative=next;selected=null;entries=[];loading=true;host.replaceChildren(message('loading'));
@@ -57,13 +85,19 @@ export function createWorkspaceFileExplorer({openMarkdown}={}) {
     relative=result.path;entries=result.entries;
     const toolbar=document.createElement('div');toolbar.className='workspace-files-toolbar';
     const up=button(parityText('parent'),()=>load(relative.split(/[\\/]/).slice(0,-1).join('/')));up.disabled=!relative;
+    up.dataset.fileAction='parent';
     toolbar.append(up,button(parityText('refresh'),()=>load(relative)));
+    for(const [kind,key] of [['file','newFile'],['folder','newFolder'],['rename','renameEntry']]) {
+      const action=button(parityText(key),()=>mutate(kind));action.dataset.fileMutation=kind;
+      if(kind==='rename'){renameButton=action;action.disabled=true;}
+      toolbar.append(action);
+    }
     const path=document.createElement('div');path.className='workspace-files-path';path.textContent=relative || root;
     const tree=document.createElement('div');tree.className='workspace-file-tree';tree.setAttribute('role','tree');tree.setAttribute('aria-label',label);
     for(const [index,entry] of entries.entries()) {
-      const item=button(`${entry.directory?'▸ ':''}${entry.name}`,()=>{selected=index;openSelection();});
+      const item=button(`${entry.directory?'▸ ':''}${entry.name}`,()=>{select(index);openSelection();});
       item.setAttribute('role','treeitem');item.setAttribute('aria-selected','false');item.tabIndex=index===0?0:-1;item.dataset.filePath=entry.path;
-      item.onfocus=()=>{selected=index;for(const node of tree.children){node.setAttribute('aria-selected',String(node===item));node.tabIndex=node===item?0:-1;}};
+      item.onfocus=()=>{selected=index;if(renameButton)renameButton.disabled=false;for(const node of tree.children){node.setAttribute('aria-selected',String(node===item));node.tabIndex=node===item?0:-1;}};
       item.onkeydown=event=>{
         const delta={ArrowDown:1,ArrowUp:-1}[event.key];
         if(delta!==undefined){event.preventDefault();select(index+delta);}
@@ -74,6 +108,7 @@ export function createWorkspaceFileExplorer({openMarkdown}={}) {
       tree.append(item);
     }
     host.replaceChildren(toolbar,path,tree);if(result.truncated)host.append(message('truncated'));
+    if(selectPath!==null){const index=entries.findIndex(entry=>entry.path===selectPath);if(index>=0){select(index);if(preview)await openSelection();}}
     if(pendingFocus){pendingFocus=false;select(0);}
   }
   return {

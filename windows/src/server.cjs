@@ -1128,6 +1128,10 @@ class CmuxWindowsRuntime {
     }
     const found = this.findPanel(panelId);
     if (!found) return false;
+    if(Object.hasOwn(updates,'filePath') && found.panel.type==='markdown') {
+      found.panel.filePath=String(updates.filePath || '');
+      if(!found.panel.titleLocked)found.panel.title=path.basename(found.panel.filePath);
+    }
     if (Object.hasOwn(updates, "title")) {
       const title = String(updates.title || "").trim();
       if (title) {

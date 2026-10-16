@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld("cmuxNative", {
   platform: process.platform,
   getAccessibilitySupport:()=>ipcRenderer.invoke('accessibility:get'),
   listWorkspaceFiles:(root,relative='')=>ipcRenderer.invoke('files:list',root,relative),
+  createWorkspaceEntry:(root,parent,name,kind)=>ipcRenderer.invoke('files:create',root,parent,name,kind),
+  renameWorkspaceEntry:(root,relative,name)=>ipcRenderer.invoke('files:rename',root,relative,name),
   searchWorkspaceFiles:(root,query)=>ipcRenderer.invoke('files:search',root,query),
   readWorkspaceFile:(root,relative)=>ipcRenderer.invoke('files:read',root,relative),
   readWorkspaceImage:(root,relative)=>ipcRenderer.invoke('files:image',root,relative),

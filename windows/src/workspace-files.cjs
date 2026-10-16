@@ -1,9 +1,49 @@
 const fs=require('node:fs/promises');
 const path=require('node:path');
 const crypto=require('node:crypto');
+const {execFile}=require('node:child_process');
+const {promisify}=require('node:util');
+const run=promisify(execFile);
 const revision=data=>crypto.createHash('sha256').update(data).digest('hex');
 class WorkspaceFiles {
-  constructor(){this.writes=new Map();}
+  constructor(){this.pending=Promise.resolve();}
+  mutate(operation){const pending=this.pending.catch(()=>{}).then(operation);this.pending=pending;return pending;}
+  validateName(name) {
+    if(typeof name!=='string' || !name || name.length>255 || name==='.' || name==='..' || /[<>:"/\\|?*\x00-\x1f]/.test(name) || /[. ]$/.test(name) || /^(?:con|prn|aux|nul|clock\$|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/iu.test(name))throw Error('invalid_name');
+    return name;
+  }
+  async create(root,parent,name,kind='file') {
+    this.validateName(name);if(!['file','folder'].includes(kind))throw Error('invalid_kind');
+    return this.mutate(async()=>{
+      const location=await this.resolve(root,parent),target=path.join(location.target,name);
+      try {if(kind==='folder')await fs.mkdir(target);else {const handle=await fs.open(target,'wx');await handle.close();}}
+      catch(error){if(error.code==='EEXIST')throw Error('entry_exists');throw error;}
+      return {path:path.join(location.relative,name)};
+    });
+  }
+  async rename(root,relative,name) {
+    this.validateName(name);
+    if(typeof relative!=='string' || !relative || path.isAbsolute(relative))throw Error('outside_root');
+    return this.mutate(async()=>{
+      // Resolve only the parent: renaming a link moves the link itself.
+      const base=await fs.realpath(root),lexical=path.resolve(base,relative),within=path.relative(base,lexical);
+      if(!within || within==='..' || within.startsWith(`..${path.sep}`) || path.isAbsolute(within))throw Error('outside_root');
+      const parent=await this.resolve(base,path.dirname(within)),source=path.join(parent.target,path.basename(within)),target=path.join(parent.target,name);
+      await fs.lstat(source);
+      if(source===target)return {path:path.join(parent.relative,name)};
+      if(process.platform!=='win32')throw Error('unsupported_platform');
+      // File.Move/Directory.Move use Windows' no-replace move. fs.rename would
+      // overwrite an existing file. Environment values remain data, never code.
+      const script="$ErrorActionPreference='Stop';try {if([IO.Directory]::Exists($env:CMUX_FILE_MUTATION_SOURCE)){[IO.Directory]::Move($env:CMUX_FILE_MUTATION_SOURCE,$env:CMUX_FILE_MUTATION_TARGET)}else{[IO.File]::Move($env:CMUX_FILE_MUTATION_SOURCE,$env:CMUX_FILE_MUTATION_TARGET)}}catch{exit 1}";
+      try {
+        await run(path.join(process.env.SystemRoot || 'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe'),['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{windowsHide:true,timeout:10000,env:{...process.env,CMUX_FILE_MUTATION_SOURCE:source,CMUX_FILE_MUTATION_TARGET:target}});
+      }catch {
+        if(source.toLowerCase()!==target.toLowerCase())try{await fs.lstat(target);throw Error('entry_exists');}catch(error){if(error.message==='entry_exists')throw error;}
+        throw Error('mutation_failed');
+      }
+      return {path:path.join(parent.relative,name)};
+    });
+  }
   async resolve(root,relative='') {
     if(typeof root!=='string' || typeof relative!=='string' || path.isAbsolute(relative))throw Error('outside_root');
     const base=await fs.realpath(root),target=await fs.realpath(path.resolve(base,relative));
@@ -44,8 +84,7 @@ class WorkspaceFiles {
     if(typeof text!=='string' || text.includes('\0'))throw Error('binary_file');
     if(Buffer.byteLength(text,'utf8')>1024*1024)throw Error('file_too_large');
     const location=await this.resolve(root,relative);
-    const previous=this.writes.get(location.target) || Promise.resolve();
-    const operation=previous.catch(()=>{}).then(async()=>{
+    return this.mutate(async()=>{
       const current=await this.read(root,relative);
       if(current.revision!==expectedRevision)throw Error('file_changed');
       const data=Buffer.from((current.bom?'\ufeff':'')+text,'utf8');
@@ -61,8 +100,6 @@ class WorkspaceFiles {
         return {path:location.relative,text,revision:revision(data),bom:current.bom};
       } finally {await fs.rm(temporary,{force:true});}
     });
-    this.writes.set(location.target,operation);
-    try{return await operation;}finally{if(this.writes.get(location.target)===operation)this.writes.delete(location.target);}
   }
   async readImage(root,relative) {
     const {target}=await this.resolve(root,relative);

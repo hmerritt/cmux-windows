@@ -22,6 +22,7 @@ export function localDocumentPath(filePath,link) {
 }
 export function createDocumentPanes({openMarkdown}={}) {
   const sessions=new Map();
+  function dispose(id){const session=sessions.get(id);if(!session)return;session.disposed=true;clearInterval(session.timer);session.find.dispose();sessions.delete(id);}
   function renderMarkdown(session,text) {
     const sanitizer=globalThis.CmuxMarkdownSanitizer;
     const profile=sanitizer.markdownProfile({url:({tag,value})=>{
@@ -100,13 +101,15 @@ export function createDocumentPanes({openMarkdown}={}) {
   return {
     render(panel,body) {
       let session=sessions.get(panel.id);
+      const identity=JSON.stringify([panel.cwd,panel.filePath]);
+      if(session && session.identity!==identity){dispose(panel.id);session=null;}
       if(!session) {
         const host=document.createElement('div');host.className='document-pane';host.tabIndex=0;host.dataset.documentPanelId=panel.id;
         const toolbar=document.createElement('div');toolbar.className='document-toolbar workspace-files-toolbar';
         const content=document.createElement('div');content.className='document-content';
         const article=document.createElement('article');article.className='markdown-body';article.style.fontSize='16px';
         const problem=document.createElement('p');problem.className='document-error';problem.setAttribute('role','alert');problem.hidden=true;
-        session={panel,host,content,article,error:problem,revision:null,file:null,mode:'preview',editor:null,fontSize:16,disposed:false,loading:false};
+        session={panel,identity,host,content,article,error:problem,revision:null,file:null,mode:'preview',editor:null,fontSize:16,disposed:false,loading:false};
         session.previewButton=button('renderedMarkdown',()=>setMode(session,'preview'));session.previewButton.dataset.documentAction='preview';session.previewButton.setAttribute('aria-pressed','true');
         session.textButton=button('documentText',()=>setMode(session,'text'));session.textButton.dataset.documentAction='text';session.textButton.setAttribute('aria-pressed','false');
         const refreshButton=button('refresh',()=>refresh(session,{force:true}));
@@ -129,6 +132,6 @@ export function createDocumentPanes({openMarkdown}={}) {
     focus(id){const session=sessions.get(id);if(session?.host.isConnected)session.host.focus();},
     zoom(id,delta,reset=false){const session=sessions.get(id);if(!session)return;session.fontSize=reset?16:Math.max(8,Math.min(48,session.fontSize+delta));session.article.style.fontSize=`${session.fontSize}px`;},
     find(id,{next=false,forward=true,hide=false}={}){const session=sessions.get(id);if(!session)return;if(hide)session.find.hide();else if(next)session.find.next(forward);else session.find.show();},
-    dispose(id){const session=sessions.get(id);if(!session)return;session.disposed=true;clearInterval(session.timer);session.find.dispose();sessions.delete(id);}
+    dispose
   };
 }

@@ -3,11 +3,12 @@ import {parityText} from './parity-messages.mjs';
 import {containModalFocus} from './modal-focus.mjs';
 import {createWorkspaceFileExplorer} from './workspace-files.mjs';
 import {createWorkspaceSearch} from './workspace-search.mjs';
+import {moveWorkspaceFileDrafts} from './file-editor.mjs';
 import {createDocumentPanes} from './document-panes.mjs';
 import {createDiffPanes} from './diff-panes.mjs';
 const diffPanes=createDiffPanes();
 const documentPanes=createDocumentPanes({openMarkdown:(root,filePath)=>openMarkdownDocument(root,filePath)});
-const workspaceFileExplorer=createWorkspaceFileExplorer({openMarkdown:(root,filePath)=>openMarkdownDocument(root,filePath)});
+const workspaceFileExplorer=createWorkspaceFileExplorer({openMarkdown:(root,filePath)=>openMarkdownDocument(root,filePath),prompt:options=>showTextDialog(options),beforeRename:(root,oldPath,newPath)=>moveWorkspaceFileDrafts(root,oldPath,newPath,{validateOnly:true}),onRename:(root,oldPath,newPath)=>renameWorkspaceDocumentReferences(root,oldPath,newPath)});
 const workspaceSearch=createWorkspaceSearch();
 import {PaneTabGroups, replaceTreePanel} from "./pane-tab-groups.js";
 const paneTabGroups = new PaneTabGroups(localStorage);
@@ -10506,6 +10507,7 @@ function appendPanelSignature(parts, panel = {}) {
   appendSignatureValue(parts, panel.shellPath || "");
   appendSignatureValue(parts, panel.terminalFontSize || 0);
   appendSignatureValue(parts, panel.url);
+  appendSignatureValue(parts, panel.filePath || '');
   appendSignatureValue(parts, Boolean(panel.needsAttention));
   appendSignatureValue(parts, panel.notificationText || "");
   appendSignatureValue(parts, Boolean(panel.pending));
@@ -12328,6 +12330,7 @@ function paneRenderSignature(workspace, visiblePanels, tree) {
     appendSignatureValue(nextParts, panel.cwd || "");
     appendSignatureValue(nextParts, panel.cwdShort || "");
     appendSignatureValue(nextParts, panel.url || "");
+    appendSignatureValue(nextParts, panel.filePath || '');
     appendSignatureValue(nextParts, panel.shellProfile || "");
     appendSignatureValue(nextParts, panel.shellPath || "");
     appendSignatureValue(nextParts, terminalFontSizeForPanel(panel));
@@ -12351,6 +12354,7 @@ function paneStructureSignature(workspace, visiblePanels, tree) {
   appendSignatureArray(parts, visiblePanels, (nextParts, panel) => {
     appendSignatureValue(nextParts, panel.id);
     appendSignatureValue(nextParts, panel.type);
+    if(panel.type==='markdown'){appendSignatureValue(nextParts,panel.cwd);appendSignatureValue(nextParts,panel.filePath);}
     appendSignatureValue(nextParts, isPendingPanel(panel));
   });
   return parts.join("");
@@ -43820,6 +43824,18 @@ async function openMarkdownDocument(root,filePath) {
   const existing=workspace.panels.find(panel=>panel.type==='markdown' && panel.cwd===root && panel.filePath===filePath);
   if(existing)return focusPanel(existing.id);
   await createPanel('markdown','right',{cwd:root,filePath,title:filePath.split(/[\\/]/).at(-1),pending:false,operation:false});
+}
+
+async function renameWorkspaceDocumentReferences(root,oldPath,newPath) {
+  moveWorkspaceFileDrafts(root,oldPath,newPath);
+  const normalize=value=>String(value || '').replaceAll('\\','/');
+  const source=normalize(oldPath),destination=normalize(newPath);
+  for(const workspace of state.data?.workspaces || [])for(const panel of workspace.panels) {
+    if(panel.type!=='markdown' || normalize(panel.cwd).toLowerCase()!==normalize(root).toLowerCase())continue;
+    const current=normalize(panel.filePath);if(current!==source && !current.startsWith(source+'/'))continue;
+    await api(`/api/panels/${panel.id}`,{method:'PATCH',body:JSON.stringify({filePath:(destination+current.slice(source.length)).replaceAll('/',newPath.includes('\\')?'\\':'/')})});
+  }
+  await loadState();
 }
 
 async function openDiffViewer() {

@@ -35,6 +35,18 @@ const editorLabels={
 };
 for(const [locale,values] of Object.entries(editorLabels))for(const [index,key] of ['editFile','saveFile','discardChanges','unsavedChanges','fileSaved','fileConflict','saveError','draftRecovered','draftError'].entries())messages[locale][key]=values[index];
 export const parityText=key=>messages[currentLocale()]?.[key] || messages.en[key] || key;
+const mutationLabels={
+  en:['New file','New folder','Rename','Create','Cancel','An item with this name already exists.','Enter a valid Windows file name.','Unable to change this item.'],
+  de:['Neue Datei','Neuer Ordner','Umbenennen','Erstellen','Abbrechen','Ein Element mit diesem Namen ist bereits vorhanden.','Geben Sie einen gültigen Windows-Dateinamen ein.','Dieses Element kann nicht geändert werden.'],
+  fr:['Nouveau fichier','Nouveau dossier','Renommer','Créer','Annuler','Un élément portant ce nom existe déjà.','Saisissez un nom de fichier Windows valide.','Impossible de modifier cet élément.'],
+  es:['Nuevo archivo','Nueva carpeta','Cambiar nombre','Crear','Cancelar','Ya existe un elemento con este nombre.','Introduce un nombre de archivo válido para Windows.','No se puede modificar este elemento.'],
+  ar:['ملف جديد','مجلد جديد','إعادة تسمية','إنشاء','إلغاء','يوجد عنصر بهذا الاسم بالفعل.','أدخل اسم ملف صالحًا في Windows.','تعذر تغيير هذا العنصر.'],
+  'zh-Hans':['新建文件','新建文件夹','重命名','创建','取消','已存在同名项目。','请输入有效的 Windows 文件名。','无法更改此项目。'],
+  'zh-Hant':['新增檔案','新增資料夾','重新命名','建立','取消','已存在同名項目。','請輸入有效的 Windows 檔案名稱。','無法變更此項目。'],
+  ko:['새 파일','새 폴더','이름 바꾸기','만들기','취소','같은 이름의 항목이 이미 있습니다.','올바른 Windows 파일 이름을 입력하세요.','이 항목을 변경할 수 없습니다.'],
+  ja:['新規ファイル','新規フォルダー','名前を変更','作成','キャンセル','同じ名前の項目が既に存在します。','有効な Windows ファイル名を入力してください。','この項目を変更できません。']
+};
+for(const [locale,values] of Object.entries(mutationLabels))for(const [index,key] of ['newFile','newFolder','renameEntry','createEntry','cancel','entryExists','invalidName','mutationError'].entries())messages[locale][key]=values[index];
 const searchLabels={
   en:['Install ripgrep and add rg to PATH to search this directory.','Unable to search this directory.','Search limit reached. Narrow your search.'],
   de:['Installieren Sie ripgrep und fügen Sie rg zu PATH hinzu, um dieses Verzeichnis zu durchsuchen.','Dieses Verzeichnis kann nicht durchsucht werden.','Suchgrenze erreicht. Grenzen Sie die Suche ein.'],

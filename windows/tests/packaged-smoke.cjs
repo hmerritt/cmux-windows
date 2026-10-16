@@ -175,12 +175,18 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
       await delay(100);
     }
     assert(matches,'Packaged directory search must execute ripgrep and render a real match');
+    const created=await evaluate(`window.cmuxNative.createWorkspaceEntry(${JSON.stringify(documentRoot)},'','new.txt','file')`);
+    assert(created.ok,'Packaged file creation IPC must load');
+    fs.writeFileSync(path.join(documentRoot,'new.txt'),'Packaged rename content');
+    const renamed=await evaluate(`window.cmuxNative.renameWorkspaceEntry(${JSON.stringify(documentRoot)},'new.txt','renamed.txt')`);
+    assert(renamed.ok,'Packaged no-replace rename helper must execute');
+    assert.equal(fs.readFileSync(path.join(documentRoot,'renamed.txt'),'utf8'),'Packaged rename content');
     const screenshot=await call('Page.captureScreenshot',{format:'png'});
     fs.mkdirSync(path.resolve(__dirname,'../test-output'),{recursive:true});
     fs.writeFileSync(path.resolve(__dirname,'../test-output/packaged.png'),Buffer.from(screenshot.data,'base64'));
     await evaluate('window.cmuxNative.closeWindow()');
     await Promise.race([exited,delay(10000).then(()=>{throw new Error('Packaged app did not close');})]);
-    console.log('PASS packaged cmux.exe: ConPTY, WebGL, inline images, file IPC, keyboard split, Markdown, local images, Mermaid, Git diff, directory search, clean close');
+    console.log('PASS packaged cmux.exe: ConPTY, WebGL, inline images, file IPC, keyboard split, Markdown, local images, Mermaid, Git diff, directory search, file creation/rename, clean close');
   } finally {
     socket?.close();
     if(child.exitCode===null) {

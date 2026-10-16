@@ -43,9 +43,38 @@ app.once('browser-window-created',(_event,win)=>win.webContents.once('did-finish
     await name('file','Renamed.txt');
     await waitFor("document.querySelector('.workspace-file-mutation-status')?.textContent==='An item with this name already exists.'");
     assert.equal(fs.readFileSync(path.join(root,'notes','Renamed.txt'),'utf8'),'Created and saved\n');
+    await evaluate("document.querySelector('.workspace-file-preview [data-file-action=edit]').click()");await key('a',['control']);await win.webContents.insertText('# Unsaved draft\n');
+    const blockedKey=`cmux.fileDraft:${JSON.stringify([root,'notes\\blocked.md'])}`;
+    await evaluate(`localStorage.setItem(${JSON.stringify(blockedKey)},JSON.stringify({text:'Keep the other draft',revision:'old'}))`);
+    await name('rename','blocked.md');
+    await waitFor("document.querySelector('.workspace-file-mutation-status')?.textContent==='Unable to keep this draft. Save before leaving this file.'");
+    assert(fs.existsSync(path.join(root,'notes','Renamed.txt')));
+    assert.equal(fs.existsSync(path.join(root,'notes','blocked.md')),false);
+    assert.equal(await evaluate(`JSON.parse(localStorage.getItem(${JSON.stringify(blockedKey)})).text`),'Keep the other draft');
+    await name('rename','recovered.md');
+    await waitFor("!![...document.querySelectorAll('[data-file-path]')].find(node=>node.dataset.filePath.endsWith('recovered.md'))");
+    await waitFor("document.querySelector('.workspace-file-preview textarea')?.value==='# Unsaved draft\\n'");
+    assert.equal(fs.readFileSync(path.join(root,'notes','recovered.md'),'utf8'),'Created and saved\n');
+    await key('s',['control']);await waitFor("document.querySelector('.workspace-file-preview [role=status]').textContent==='Saved'");
+    await evaluate("document.querySelector('[data-file-action=markdown]').click()");
+    await waitFor("document.querySelector('.markdown-body h1')?.textContent==='Unsaved draft'");
+    await evaluate("document.querySelector('[data-file-action=parent]').click()");
+    await waitFor("!!document.querySelector('[data-file-path=notes]')");
+    await evaluate("document.querySelector('[data-file-path=notes]').focus()");
+    await name('rename','journal');
+    await waitFor("!!document.querySelector('[data-file-path=journal]')");
+    await waitFor("document.querySelector('.markdown-body h1')?.textContent==='Unsaved draft' && document.querySelector('.document-error')?.hidden");
+    await evaluate("document.querySelector('.document-pane [data-document-action=text]').click()");
+    await waitFor("!!document.querySelector('.document-pane textarea')");
+    await evaluate("document.querySelector('.document-pane [data-file-action=edit]').click()");
+    await key('End',['control']);await win.webContents.insertText('Added after folder rename\n');await key('s',['control']);
+    await waitFor("document.querySelector('.document-pane [role=status]').textContent==='Saved'");
+    assert.equal(fs.readFileSync(path.join(root,'journal','recovered.md'),'utf8'),'# Unsaved draft\nAdded after folder rename\n');
     fs.mkdirSync(path.resolve(__dirname,'../test-output'),{recursive:true});fs.writeFileSync(path.resolve(__dirname,'../test-output/file-mutations.png'),(await win.webContents.capturePage()).toPNG());
-    console.log('PASS file mutations: new folder, nested file, shared editor/save, rename, case-only rename and collision preservation');
-  }catch(error){failed=true;console.error(error.stack||error);}
+    const reloaded=new Promise(resolve=>win.webContents.once('did-finish-load',resolve));win.webContents.reload();await reloaded;
+    await waitFor("document.querySelector('.markdown-body h1')?.textContent==='Unsaved draft'");
+    console.log('PASS file mutations: creation, shared editing, case-only rename, collision preservation, draft migration and open-document folder rename/restoration');
+  }catch(error){failed=true;console.error(error.stack||error);console.error(await evaluate("JSON.stringify({status:document.querySelector('.document-pane [role=status]')?.textContent,editor:document.querySelector('.document-pane textarea')?.outerHTML,error:document.querySelector('.document-error')?.textContent})"));}
   finally{clearTimeout(deadline);win.destroy();app.quit();}
 }));
 app.on('will-quit',event=>{if(failed){event.preventDefault();app.exit(1);}});

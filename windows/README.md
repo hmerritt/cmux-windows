@@ -70,6 +70,7 @@ Implemented in this milestone:
 - Compact Tools menu for workspace/session actions so the default top bar stays simple.
 - Terminal tabs within each split, with keyboard navigation, drag reordering, moving tabs between splits, Shift-dragging whole groups and edge drops to create splits. Hidden processes survive tab switches. Tab groups and nested split layout survive a desktop restart.
 - Workspace file browser with keyboard navigation, UTF-8 previews and explicit editing, restricted to files within the workspace. Ctrl+S saves existing files up to 1 MB, detects external changes, and preserves BOM/CRLF. Unsaved drafts are recovered when reopening a file; Discard changes reloads the disk version.
+- New file, New folder and Rename actions preserve existing destinations. File/folder renames move drafts and retarget open Markdown panes, including case-only renames. Windows-invalid names and mutations through outside-workspace junctions are rejected.
 - Find in Directory (Ctrl+Shift+F) searches workspace content with literal smart-case queries, ignore rules and cancellable ripgrep processes. Results open at the matching line in the shared editor. Requires `rg` on PATH. Save and Word Wrap (Alt+Z) support live shortcut overrides; wrapping persists across editor openings.
 - Markdown panes with live Preview/Text modes, shared editing, tables, syntax highlighting, Mermaid, scoped local images, find and zoom. Open them from the file browser.
 - Read-only Git diff panes with staged/working changes, file and hunk navigation, search and persistent viewed marks. Open Git diff from the command palette or keyboard shortcut settings.
@@ -105,6 +106,7 @@ npm run test:shortcuts
 npm run test:parity
 npm run test:documents
 npm run test:search
+npm run test:files
 npm run smoke
 npm run test:desktop
 npm run pack:win

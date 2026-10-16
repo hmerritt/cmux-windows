@@ -719,6 +719,12 @@ if (!hasLock) {
   ipcMain.handle('files:write',trustedIpcHandler(async(_event,root,relative,text,revision)=>{
     try{return {ok:true,...await workspaceFiles.write(root,relative,text,revision)};}catch(error){return {ok:false,error:error.message};}
   },null));
+  ipcMain.handle('files:create',trustedIpcHandler(async(_event,root,parent,name,kind)=>{
+    try{return {ok:true,...await workspaceFiles.create(root,parent,name,kind)};}catch(error){return {ok:false,error:error.message};}
+  },null));
+  ipcMain.handle('files:rename',trustedIpcHandler(async(_event,root,relative,name)=>{
+    try{return {ok:true,...await workspaceFiles.rename(root,relative,name)};}catch(error){return {ok:false,error:error.message};}
+  },null));
   ipcMain.handle('files:image',trustedIpcHandler(async(_event,root,relative)=>{
     try{return {ok:true,...await workspaceFiles.readImage(root,relative)};}catch(error){return {ok:false,error:error.message};}
   },null));

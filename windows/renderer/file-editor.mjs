@@ -2,6 +2,31 @@ import {parityText} from './parity-messages.mjs';
 const editors=new WeakMap();
 let recentEditor=null;
 const wrapKey='cmux.fileEditor.wordWrap';
+export function moveWorkspaceFileDrafts(root,oldPath,newPath,{validateOnly=false}={}) {
+  const normalize=value=>value.replaceAll('\\','/');
+  const source=normalize(oldPath),destination=normalize(newPath),prefix='cmux.fileDraft:';
+  const changes=[];
+  for(let i=0;i<localStorage.length;i++) {
+    const key=localStorage.key(i);if(!key?.startsWith(prefix))continue;
+    let pair;try{pair=JSON.parse(key.slice(prefix.length));}catch{continue;}
+    if(!Array.isArray(pair) || pair[0]!==root || typeof pair[1]!=='string')continue;
+    const current=normalize(pair[1]);
+    if(current!==source && !current.startsWith(source+'/'))continue;
+    // Keep native path separators so a reopened editor finds its existing draft.
+    const next=(destination+current.slice(source.length)).replaceAll('/',newPath.includes('\\')?'\\':'/');
+    changes.push([key,`${prefix}${JSON.stringify([root,next])}`,localStorage.getItem(key)]);
+  }
+  for(const [oldKey,newKey] of changes) {
+    if(oldKey===newKey)continue;
+    if(localStorage.getItem(newKey)!==null)throw Error('draft_conflict');
+  }
+  if(validateOnly)return;
+  for(const [oldKey,newKey,value] of changes) {
+    if(oldKey===newKey)continue;
+    localStorage.removeItem(oldKey);
+    try{localStorage.setItem(newKey,value);}catch(error){localStorage.setItem(oldKey,value);throw error;}
+  }
+}
 const wraps=()=>{try{return localStorage.getItem(wrapKey)==='true';}catch{return false;}};
 function applyWrap(text){const enabled=wraps();text.wrap=enabled?'soft':'off';text.style.whiteSpace=enabled?'pre-wrap':'pre';}
 export function workspaceFileEditorFor(target,{fallback=false}={}) {
