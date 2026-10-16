@@ -73,6 +73,25 @@ app.once('browser-window-created',(_event,win)=>win.webContents.once('did-finish
     fs.mkdirSync(path.resolve(__dirname,'../test-output'),{recursive:true});fs.writeFileSync(path.resolve(__dirname,'../test-output/file-mutations.png'),(await win.webContents.capturePage()).toPNG());
     const reloaded=new Promise(resolve=>win.webContents.once('did-finish-load',resolve));win.webContents.reload();await reloaded;
     await waitFor("document.querySelector('.markdown-body h1')?.textContent==='Unsaved draft'");
+    win.webContents.send('cmux-command','shortcut.switchRightSidebarToFiles');
+    await waitFor("!!document.querySelector('[data-file-path=journal]')");
+    assert(await evaluate("!!document.querySelector('[data-file-mutation=duplicate]')"),'Files must expose the native Duplicate action');
+    await evaluate("document.querySelector('[data-file-path=journal]').focus();document.querySelector('[data-file-mutation=duplicate]').click()");
+    await waitFor(`!!document.querySelector('[data-file-path="journal copy"]')`);
+    assert.equal(fs.readFileSync(path.join(root,'journal copy','recovered.md'),'utf8'),'# Unsaved draft\nAdded after folder rename\n');
+    await key('F10',['shift']);
+    await waitFor("!!document.querySelector('[data-file-menu=trash]')");
+    await evaluate("document.querySelector('[data-file-menu=trash]').click()");
+    await waitFor("!document.querySelector('[data-file-path=\"journal copy\"]')");
+    assert(!fs.existsSync(path.join(root,'journal copy')));
+    assert(fs.existsSync(path.join(root,'journal','recovered.md')));
+    await evaluate("document.querySelector('[data-file-path=journal]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:1000,clientY:150}))");
+    await waitFor("!!document.querySelector('[data-file-menu=duplicate]')");
+    await evaluate("document.querySelector('[data-file-menu=duplicate]').click()");
+    await waitFor("!!document.querySelector('[data-file-path=\"journal copy\"]')");
+    await evaluate("document.querySelector('[data-file-mutation=trash]').click()");
+    await waitFor("!document.querySelector('[data-file-path=\"journal copy\"]')");
+    assert(!fs.existsSync(path.join(root,'journal copy')));
     console.log('PASS file mutations: creation, shared editing, case-only rename, collision preservation, draft migration and open-document folder rename/restoration');
   }catch(error){failed=true;console.error(error.stack||error);console.error(await evaluate("JSON.stringify({status:document.querySelector('.document-pane [role=status]')?.textContent,editor:document.querySelector('.document-pane textarea')?.outerHTML,error:document.querySelector('.document-error')?.textContent})"));}
   finally{clearTimeout(deadline);win.destroy();app.quit();}

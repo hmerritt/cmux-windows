@@ -31,3 +31,35 @@ test('file creation and rename preserve content, reject collisions and stay insi
     assert.equal(await fs.readFile(path.join(root,'exclusive.txt'),'utf8'),'');
   }finally{await fs.rm(folder,{recursive:true,force:true});}
 });
+
+test('duplicate and trash preserve siblings, copy folders and act on links rather than their targets',async()=>{
+  const folder=await fs.mkdtemp(path.join(os.tmpdir(),'cmux-file-removal-model-')),root=path.join(folder,'root'),bin=path.join(folder,'bin');
+  try {
+    await fs.mkdir(root);await fs.mkdir(bin);
+    const trashed=[];
+    const files=new WorkspaceFiles({trash:async target=>{trashed.push(target);await fs.rename(target,path.join(bin,path.basename(target)));}});
+    await fs.writeFile(path.join(root,'notes.md'),'original');
+    const first=await files.duplicate(root,'notes.md');assert.equal(first.path,'notes copy.md');
+    const second=await files.duplicate(root,'notes.md');assert.equal(second.path,'notes copy 2.md');
+    assert.equal(await fs.readFile(path.join(root,first.path),'utf8'),'original');
+    await fs.mkdir(path.join(root,'folder'));await fs.writeFile(path.join(root,'folder','child.txt'),'child');
+    assert.equal((await files.duplicate(root,'folder')).path,'folder copy');
+    assert.equal(await fs.readFile(path.join(root,'folder copy','child.txt'),'utf8'),'child');
+    await fs.writeFile(path.join(root,'.env'),'hidden');assert.equal((await files.duplicate(root,'.env')).path,'.env copy');
+    assert.equal((await files.duplicate(root,'notes.md','%@ copie')).path,'notes copie.md');
+    await fs.writeFile(path.join(folder,'outside.txt'),'outside');await fs.symlink(folder,path.join(root,'outside-link'),'junction');
+    await assert.rejects(files.trash(root,''),/outside_root/);
+    await assert.rejects(files.trash(root,'../outside.txt'),/outside_root/);
+    await assert.rejects(files.trash(root,'outside-link/outside.txt'),/outside_root/);
+    await assert.rejects(files.duplicate(root,'outside-link/outside.txt'),/outside_root/);
+    await files.duplicate(root,'outside-link');assert((await fs.lstat(path.join(root,'outside-link copy'))).isSymbolicLink());
+    await files.trash(root,'outside-link');assert((await fs.lstat(path.join(bin,'outside-link'))).isSymbolicLink());
+    assert.equal(await fs.readFile(path.join(folder,'outside.txt'),'utf8'),'outside');
+    await files.trash(root,'folder');assert.equal(await fs.readFile(path.join(bin,'folder','child.txt'),'utf8'),'child');
+    await files.trash(root,'notes.md');assert.equal(await fs.readFile(path.join(bin,'notes.md'),'utf8'),'original');
+    assert.equal(await fs.readFile(path.join(root,'notes copy.md'),'utf8'),'original');
+    assert.equal(trashed.length,3);
+    const unavailable=new WorkspaceFiles();await assert.rejects(unavailable.trash(root,'notes copy.md'),/trash_unavailable/);
+    assert.equal(await fs.readFile(path.join(root,'notes copy.md'),'utf8'),'original');
+  }finally{await fs.rm(folder,{recursive:true,force:true});}
+});
