@@ -128,3 +128,16 @@ const diffSourceLabels={
   ja:['差分ソース','ブランチの変更','比較元のブランチまたはコミット','比較元を自動選択','比較','共通の履歴を持つ既存のブランチまたはコミットを選択してください。','差分ソースを保存できません。']
 };
 for(const [locale,values] of Object.entries(diffSourceLabels))for(const [index,key] of ['diffSource','diffBranchChanges','diffBase','diffAutomaticBase','diffCompare','diffBaseError','diffSourceSaveError'].entries())messages[locale][key]=values[index];
+
+const chartLabels={
+  en:['This chart uses external resources. Use inline data instead.','This chart exceeds the preview limit. Its source is shown below.','Unable to render this chart. Its source is shown below.'],
+  de:['Dieses Diagramm verwendet externe Ressourcen. Verwenden Sie stattdessen eingebettete Daten.','Dieses Diagramm überschreitet das Vorschaulimit. Der Quelltext wird unten angezeigt.','Dieses Diagramm kann nicht dargestellt werden. Der Quelltext wird unten angezeigt.'],
+  fr:['Ce graphique utilise des ressources externes. Utilisez des données intégrées.','Ce graphique dépasse la limite d’aperçu. Son code source est affiché ci-dessous.','Impossible d’afficher ce graphique. Son code source est affiché ci-dessous.'],
+  es:['Este gráfico usa recursos externos. Usa datos incluidos en el documento.','Este gráfico supera el límite de vista previa. Su código se muestra debajo.','No se puede mostrar este gráfico. Su código se muestra debajo.'],
+  ar:['يستخدم هذا المخطط موارد خارجية. استخدم بيانات مضمنة بدلًا منها.','يتجاوز هذا المخطط حد المعاينة. يظهر مصدره أدناه.','تعذر عرض هذا المخطط. يظهر مصدره أدناه.'],
+  'zh-Hans':['此图表使用外部资源。请改用内嵌数据。','此图表超出预览限制。下方显示其源代码。','无法呈现此图表。下方显示其源代码。'],
+  'zh-Hant':['此圖表使用外部資源。請改用內嵌資料。','此圖表超出預覽限制。下方顯示其原始碼。','無法呈現此圖表。下方顯示其原始碼。'],
+  ko:['이 차트는 외부 리소스를 사용합니다. 인라인 데이터를 사용하세요.','이 차트는 미리 보기 제한을 초과합니다. 아래에 소스가 표시됩니다.','이 차트를 렌더링할 수 없습니다. 아래에 소스가 표시됩니다.'],
+  ja:['このグラフは外部リソースを使用しています。埋め込みデータを使用してください。','このグラフはプレビューの制限を超えています。ソースを下に表示します。','このグラフを描画できません。ソースを下に表示します。']
+};
+for(const [locale,values] of Object.entries(chartLabels))for(const [index,key] of ['chartExternalError','chartLimit','chartRenderError'].entries())messages[locale][key]=values[index];

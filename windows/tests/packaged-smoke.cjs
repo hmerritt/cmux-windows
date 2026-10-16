@@ -135,6 +135,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     const documentRoot=path.join(profile,'documents');
     fs.mkdirSync(documentRoot);
     fs.writeFileSync(path.join(documentRoot,'notes.md'),'# Packaged document\n\n![Local](local.png)\n\n```mermaid\nflowchart LR\nA --> B\n```\n');
+    fs.appendFileSync(path.join(documentRoot,'notes.md'),'\n```vega-lite\n'+JSON.stringify({data:{values:[{category:'A',value:4},{category:'B',value:9}]},mark:'bar',encoding:{x:{field:'category',type:'nominal'},y:{field:'value',type:'quantitative'}}})+'\n```\n');
     fs.copyFileSync(path.resolve(__dirname,'../src/assets/cmux.png'),path.join(documentRoot,'local.png'));
     const git=(...args)=>execFileSync('git',['-C',documentRoot,...args],{windowsHide:true,stdio:'pipe'});
     git('init');git('config','user.name','Test');git('config','user.email','test@example.invalid');
@@ -144,11 +145,11 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     await api('/api/panels',{workspaceId:documents.id,type:'markdown',cwd:documentRoot,filePath:'notes.md',title:'notes.md'});
     let documentReady=false;
     for(let i=0;i<150;i++) {
-      documentReady=await evaluate("document.querySelector('.markdown-body h1')?.textContent==='Packaged document' && document.querySelector('.markdown-body img')?.naturalWidth>0 && !!document.querySelector('.document-diagram svg')");
+      documentReady=await evaluate("document.querySelector('.markdown-body h1')?.textContent==='Packaged document' && document.querySelector('.markdown-body img')?.naturalWidth>0 && !!document.querySelector('.document-diagram:not(.document-vega) svg') && !!document.querySelector('.document-vega svg') && !document.querySelector('iframe[src*=document-chart-frame]')");
       if(documentReady)break;
       await delay(100);
     }
-    assert(documentReady,'Packaged Markdown, scoped local images and Mermaid assets must render');
+    assert(documentReady,'Packaged Markdown, scoped local images, Mermaid and sandboxed Vega assets must render');
     await api('/api/panels',{workspaceId:documents.id,type:'diff',cwd:documentRoot,title:'Git diff'});
     let diffReady=false;
     for(let i=0;i<100;i++) {
@@ -227,7 +228,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     fs.writeFileSync(path.resolve(__dirname,'../test-output/packaged.png'),Buffer.from(screenshot.data,'base64'));
     await evaluate('window.cmuxNative.closeWindow()');
     await Promise.race([exited,delay(10000).then(()=>{throw new Error('Packaged app did not close');})]);
-    console.log('PASS packaged cmux.exe: ConPTY, WebGL, inline images, file IPC, keyboard split, Markdown, local images, Mermaid, split Git diff and saved display preferences, directory search, file creation/rename/duplicate and Recycle Bin, clean close');
+    console.log('PASS packaged cmux.exe: ConPTY, WebGL, inline images, file IPC, keyboard split, Markdown, local images, Mermaid, sandboxed Vega, split Git diff and saved display preferences, directory search, file creation/rename/duplicate and Recycle Bin, clean close');
   } finally {
     socket?.close();
     if(child.exitCode===null) {

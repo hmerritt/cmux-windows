@@ -25,6 +25,7 @@ It does not execute Apple SwiftUI or the macOS GhosttyKit binary.
 | Find in Directory | Ctrl+Shift+F and the canonical action open a sidebar content search. Ripgrep uses fixed strings, smart case, hidden files and native excluded directories. Results open the shared editor at the matching line/column. Searches cancel on replacement/closure and have process, output and result bounds. Requires `rg` on PATH; missing-tool copy is translated. |
 | File editor actions | Save and Word Wrap use the shared shortcut registry, including live rebinding/unbinding. Word wrap is persisted and reflows open editors. Desktop tests cover default/rebound keys and the canonical menu save action. |
 | Markdown panes | File-browser action opens a restored document pane with Preview/Text modes, live disk updates, shared editing, syntax highlighting, tables, local images, Mermaid diagrams, contextual zoom and find across formatted text. Shared upstream parser and sanitizer assets are shipped locally. |
+| Markdown charts | Vega, Vega-Lite and `vegalite` fences render as sanitized static SVG using the bundled native libraries. External loader/mark resources are rejected while inline URL columns remain data. Rendering runs in an opaque sandbox frame with no network/image access, native bridge or Node; only SVG reaches the parent. Invalid or oversized charts retain readable source and translated notices. Frames are removed after render, failure, refresh or disposal. |
 | Git diff panes | Canonical action opens a read-only viewer for staged, working, renamed and untracked changes. File search, file/hunk navigation, scrolling and persistent viewed marks work through contextual shortcuts. Git runs without shell interpolation, external diff drivers or text conversion; literal filenames and binary/large-file limits are tested. |
 | Diff sources | Each pane selects working, staged or branch changes and restores its source/base after reload or full runtime recreation. Working includes untracked files; staged isolates the index. Branch compares the merge base with the working tree, including committed changes, staged/unstaged edits, deletions and renames. Manual branch/commit bases are validated; defaults prefer a recorded creation base, an integration upstream, then origin/default/main/master candidates. Own-branch tracking refs are skipped. Viewed marks are scoped by source and branch base. |
 | Diff display preferences | Unified and split layouts retain real old/new line numbers, unequal replacement blocks and missing-newline markers. Word wrap, word-level highlights, line numbers, change backgrounds, bars/classic/no indicators and expanded unchanged context update live across panes and survive reload. Context reads stay bounded, preserve viewed-file identity and reject concurrent changes; oversized full context shows a visible compact-context notice. A shared JSON preference file uses the native schema and `CMUX_DIFF_VIEWER_PREFS_PATH` override; writes merge serially and replace atomically. |
@@ -60,6 +61,14 @@ $env:CMUX_TEST_BINARY = "$PWD/release-parity/win-unpacked/cmux.exe"
 npm run test:packaged
 ```
 
+Markdown chart regression `e3af2f7fcc` fails with `npm run test:documents`
+because all three supported fence forms remain code. The same command passes
+with Vega rendering, including 150% scaling. Desktop checks verify invalid-source
+fallback, rejected external data, sanitized SVG, frame cleanup and actual
+cross-origin/native-bridge/Node isolation. Policy tests cover nested loader and
+mark references, legitimate inline URL columns and input limits. Packaged smoke
+checks exercise the shipped Vega libraries and sandbox frame.
+
 Diff-source regressions were committed failing in `3bdb22d247`: staged status
 incorrectly included working-only files and the desktop lacked a source picker.
 The same `node --test tests/workspace-git.test.cjs` and `npm run test:documents`
@@ -72,7 +81,7 @@ and branch sources through the shipped IPC and renderer.
 The original tab-drag regression was committed failing in `8675e3060d`;
 cross-workspace drops were committed failing in `1165162f6e`. The same
 `npm run test:parity` command passes with both implementations. Unit/model tests
-cover 34 behaviors. File-editing regression `3cf324a876` fails with
+cover 35 behaviors. File-editing regression `3cf324a876` fails with
 `node --test tests/workspace-files.test.cjs`; the same command passes with the
 editor implementation. Desktop tests use isolated profiles and private pipes.
 Markdown regression `8918250cad` and Git-viewer regression `e38392c05f`
@@ -119,7 +128,7 @@ They do not replace or stop an already running user build.
   settings window is not recreated 1:1. The file editor supports existing UTF-8
   files up to 1 MB. File moves, multiple selection, complete explorer menus and the other
   macOS right-sidebar tools remain. Paired macOS visual comparison of the dock
-  remains. Markdown math/Vega and exhaustive rendering parity remain. Git diff
+  remains. Markdown math and exhaustive rendering parity remain. Git diff
   patch/last-turn sources, PR-aware base suggestions, the native ref picker,
   review comments, syntax highlighting, generated-file
   handling and the complete macOS diff presentation remain. The audited

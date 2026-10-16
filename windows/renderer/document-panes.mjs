@@ -1,6 +1,7 @@
 import {parityText} from './parity-messages.mjs';
 import {attachWorkspaceFileEditor} from './file-editor.mjs';
 import {createDocumentFind} from './document-find.mjs';
+import {renderVega} from './document-vega.mjs';
 
 function button(key,run){const node=document.createElement('button');node.type='button';node.textContent=parityText(key);node.onclick=run;return node;}
 let mermaidLoader;
@@ -22,8 +23,9 @@ export function localDocumentPath(filePath,link) {
 }
 export function createDocumentPanes({openMarkdown}={}) {
   const sessions=new Map();
-  function dispose(id){const session=sessions.get(id);if(!session)return;session.disposed=true;clearInterval(session.timer);session.find.dispose();sessions.delete(id);}
+  function dispose(id){const session=sessions.get(id);if(!session)return;session.disposed=true;session.chartController?.abort();clearInterval(session.timer);session.find.dispose();sessions.delete(id);}
   function renderMarkdown(session,text) {
+    session.chartController?.abort();session.chartController=new AbortController();
     const sanitizer=globalThis.CmuxMarkdownSanitizer;
     const profile=sanitizer.markdownProfile({url:({tag,value})=>{
       if(tag==='a')return /^(?:https?:|mailto:|#)/i.test(value) || localDocumentPath(session.panel.filePath,value)?value:null;
@@ -48,6 +50,21 @@ export function createDocumentPanes({openMarkdown}={}) {
     }
     session.find.update();
     const revision=session.revision;
+    for(const code of session.article.querySelectorAll('pre code.language-vega,pre code.language-vega-lite,pre code.language-vegalite')) {
+      const mode=code.classList.contains('language-vega')?'vega':'vega-lite';
+      const signal=session.chartController.signal;
+      Promise.resolve().then(()=>renderVega(code.textContent,mode,{signal})).then(svg=>{
+        if(session.disposed || signal.aborted || session.revision!==revision || !code.isConnected)return;
+        const chart=document.createElement('div');chart.className='document-vega document-diagram';
+        chart.append(sanitizer.sanitizeToFragment(svg,{document,profile:sanitizer.diagramProfile()}));
+        code.parentElement.replaceWith(chart);session.find.update();
+      }).catch(failure=>{
+        if(session.disposed || signal.aborted || !code.isConnected)return;
+        const notice=document.createElement('p');notice.className='document-chart-error';notice.setAttribute('role','status');
+        notice.textContent=parityText(failure.message==='external_chart'?'chartExternalError':failure.message==='chart_limit'?'chartLimit':'chartRenderError');code.parentElement.before(notice);
+      });
+    }
+
     for(const code of session.article.querySelectorAll('pre code.language-mermaid')) {
       if(code.textContent.length>50000)continue;
       const source=code.textContent;

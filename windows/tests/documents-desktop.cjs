@@ -14,7 +14,7 @@ const markdown='# Document parity\n\n| Name | Value |\n| --- | --- |\n| Safe | Y
 const liteChart={data:{values:[{label:'A',value:3},{label:'B',value:7}]},mark:'bar',encoding:{x:{field:'label',type:'nominal'},y:{field:'value',type:'quantitative'}}};
 const rawChart={width:160,height:80,data:[{name:'table',values:[{x:10,y:15}]}],marks:[{type:'rect',from:{data:'table'},encode:{enter:{x:{field:'x'},y:{field:'y'},width:{value:30},height:{value:45},fill:{value:'steelblue'}}}}]};
 const charts=['vega-lite','vegalite'].map(language=>'\n```'+language+'\n'+JSON.stringify(liteChart)+'\n```\n').join('')+'\n```vega\n'+JSON.stringify(rawChart)+'\n```\n';
-fs.writeFileSync(path.join(root,'notes.md'),markdown+charts);
+fs.writeFileSync(path.join(root,'notes.md'),markdown+charts+'\n```vega-lite\n'+JSON.stringify({...liteChart,data:{url:'https://cmux-chart.invalid/private.json'}})+'\n```\n\n```vega\n{invalid JSON}\n```\n');
 fs.copyFileSync(path.resolve(__dirname,'../src/assets/cmux.png'),path.join(root,'local.png'));
 const git=(...args)=>execFileSync('git',['-C',root,...args],{windowsHide:true,stdio:'pipe'});
 git('init');git('config','user.name','Test');git('config','user.email','test@example.invalid');
@@ -23,7 +23,9 @@ git('add','.');git('commit','-m','Document fixture');
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let failed=false;
 const deadline=setTimeout(()=>{console.error('Document tests timed out');app.exit(1);},90000);
+let chartExternalRequests=0;
 app.once('browser-window-created',(_event,win)=>{
+  win.webContents.session.webRequest.onBeforeRequest({urls:['https://cmux-chart.invalid/*']},(_details,callback)=>{chartExternalRequests++;callback({cancel:true});});
   win.webContents.once('did-finish-load',async()=>{
     const evaluate=expression=>win.webContents.executeJavaScript(expression);
     async function waitFor(expression){for(let n=0;n<100;n++){if(await evaluate(expression))return;await delay(100);}throw Error(`Timed out: ${expression}`);}
@@ -49,7 +51,24 @@ app.once('browser-window-created',(_event,win)=>{
       await win.webContents.insertText('across nodes here');
       await waitFor("document.querySelector('.document-find output').textContent==='1/1'");
       await key('Escape');
+      await waitFor("document.querySelectorAll('.document-vega svg').length===3");
       assert.equal(await evaluate("document.querySelectorAll('.document-vega svg').length"),3,'Markdown must render Vega, Vega-Lite and vegalite code fences');
+      await waitFor("document.querySelectorAll('.document-chart-error').length===2 && !document.querySelector('iframe[src*=document-chart-frame]')");
+      assert(await evaluate("[...document.querySelectorAll('.document-chart-error')].some(node=>node.textContent.includes('external resources')) && [...document.querySelectorAll('pre code')].some(code=>code.textContent.includes('{invalid JSON}'))"));
+      assert(await evaluate("!document.querySelector('.document-vega script,.document-vega [onload],.document-vega [href]') && [...document.querySelectorAll('.document-vega *')].every(node=>!node.hasAttribute('xlink:href'))"),'Only sanitized static chart SVG enters the document');
+      fs.mkdirSync(path.resolve(__dirname,'../test-output'),{recursive:true});
+      await evaluate("document.querySelector('.document-vega').scrollIntoView({block:'start'})");
+      fs.writeFileSync(path.resolve(__dirname,'../test-output/markdown-charts.png'),(await win.webContents.capturePage()).toPNG());
+      assert(await evaluate("getComputedStyle(document.querySelector('.document-chart-error+pre')).color===getComputedStyle(document.querySelector('.markdown-body')).color"),'Unrendered chart source stays readable in the document theme');
+      assert.equal(chartExternalRequests,0,'Chart data references cannot issue network requests');
+      await evaluate("window.chartSandboxProbe=document.createElement('iframe');window.chartSandboxProbe.hidden=true;window.chartSandboxProbe.sandbox='allow-scripts';window.chartSandboxProbe.src='/document-chart-frame.html';document.body.append(window.chartSandboxProbe);void 0");
+      let sandboxFrame;
+      for(let n=0;n<100;n++){sandboxFrame=win.webContents.mainFrame.frames.find(frame=>frame.url.includes('/document-chart-frame.html'));if(sandboxFrame)break;await delay(50);}
+      assert(sandboxFrame,'The chart runs in a separate frame');
+      const isolation=await sandboxFrame.executeJavaScript("(()=>{let parentBlocked=false;try{void parent.document;}catch{parentBlocked=true;}return {parentBlocked,noNative:typeof window.cmuxNative==='undefined',noNode:typeof require==='undefined'};})()");
+      assert.deepEqual(isolation,{parentBlocked:true,noNative:true,noNode:true});
+      await evaluate("window.chartSandboxProbe.remove();delete window.chartSandboxProbe");
+      console.log('PASS Markdown charts: Vega/Vega-Lite aliases, sanitized SVG, external-data rejection, invalid-source fallback and frame cleanup');
       console.log('PASS Markdown: real pane, headings, tables, code, shared sanitizer and contextual zoom');
       fs.writeFileSync(path.join(root,'notes.md'),'# Live update\n');
       await waitFor("document.querySelector('.markdown-body h1')?.textContent==='Live update'");

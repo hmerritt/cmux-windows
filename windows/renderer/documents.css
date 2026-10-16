@@ -65,3 +65,8 @@
 .diff-removed .diff-word-change { background:#f8514966; border-radius:2px; }
 
 .diff-line { min-height:1.6em; }
+
+.document-vega { overflow:auto; max-width:100%; margin:16px 0; }
+.document-vega svg { display:block; max-width:100%; height:auto; }
+.document-chart-error { color:var(--color-text,#ddd); }
+.document-content .markdown-body .document-chart-error+pre { color:inherit; }
