@@ -712,6 +712,9 @@ if (!hasLock) {
   ipcMain.handle('files:read',trustedIpcHandler(async(_event,root,relative)=>{
     try{return {ok:true,...await workspaceFiles.read(root,relative)};}catch(error){return {ok:false,error:error.message};}
   },null));
+  ipcMain.handle('files:write',trustedIpcHandler(async(_event,root,relative,text,revision)=>{
+    try{return {ok:true,...await workspaceFiles.write(root,relative,text,revision)};}catch(error){return {ok:false,error:error.message};}
+  },null));
   app.on('accessibility-support-changed',(_event,enabled)=>mainWindow?.webContents.send('cmux-accessibility',enabled));
   ipcMain.handle('shortcuts:update', trustedIpcHandler((_event,id,value,reset)=>publishShortcutSnapshot(shortcutConfig.update(id,value,reset)),null));
   ipcMain.handle('shortcuts:reload', trustedIpcHandler(()=>publishShortcutSnapshot(shortcutConfig.reload()),null));

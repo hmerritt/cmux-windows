@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld("cmuxNative", {
   getAccessibilitySupport:()=>ipcRenderer.invoke('accessibility:get'),
   listWorkspaceFiles:(root,relative='')=>ipcRenderer.invoke('files:list',root,relative),
   readWorkspaceFile:(root,relative)=>ipcRenderer.invoke('files:read',root,relative),
+  writeWorkspaceFile:(root,relative,text,revision)=>ipcRenderer.invoke('files:write',root,relative,text,revision),
   onAccessibilitySupport(callback){ipcRenderer.on('cmux-accessibility',(_event,enabled)=>callback(enabled));},
   getShortcuts: () => ipcRenderer.invoke('shortcuts:get'),
   updateShortcut: (id,value,reset=false) => ipcRenderer.invoke('shortcuts:update',id,value,reset),

@@ -13496,7 +13496,7 @@ async function movePaneTabsToWorkspace(panelId,workspaceId,options={}) {
   try {
     const response=await api('/api/panels/transfer',{method:'POST',body:JSON.stringify({panelIds:result.panelIds,workspaceId,activePanelId:panelId})});
     if(!response?.ok)throw Error('transfer_failed');
-    focusPanel(panelId);
+    if(state.data?.activeWorkspaceId===workspaceId && target.activePanelId===panelId)focusPanel(panelId);
   } catch {
     paneTabGroups.groups=previousGroups;paneTabGroups.save();
     state.paneTrees=previousTrees;savePaneTreeLayouts(state.paneTrees);

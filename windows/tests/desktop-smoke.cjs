@@ -73,6 +73,7 @@ app.on('browser-window-created', (_event, win) => {
       const active = state.workspaces.find(w => w.id === state.activeWorkspaceId);
       const terminal = active.panels.find(p => p.type === 'terminal');
       assert(terminal, 'New workspace must contain a terminal');
+      await waitFor(`document.querySelector('.pane[data-panel-id="${terminal.id}"] .xterm-helper-textarea') !== null`);
       // Deliver through the actual xterm input handler, then assert rendered output.
       await waitFor("document.querySelector('.xterm-screen').textContent.includes('❯') || document.querySelector('.xterm-screen').textContent.includes('>')");
       win.focus();

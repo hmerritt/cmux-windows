@@ -129,6 +129,7 @@ app.once('browser-window-created',(_event,win)=>{
       await evaluate("document.querySelector('.xterm-helper-textarea').focus()");
       await key('r',['control']);
       await waitFor("document.querySelector('.app-dialog input') !== null");
+      await waitFor("document.activeElement.matches('.app-dialog input')");
       assert(await evaluate("document.querySelector('.app-dialog').getAttribute('aria-labelledby') !== null"));
       await key('Tab',['shift']);
       assert(await evaluate("document.activeElement.classList.contains('dialog-confirm')"),'Shift+Tab wraps within the dialog');
@@ -161,6 +162,34 @@ app.once('browser-window-created',(_event,win)=>{
       win.webContents.reload();await transferredReload;
       await waitFor("document.querySelectorAll('.pane-tab').length===4 && document.querySelectorAll('.pane').length===3");
       console.log('PASS cross-workspace tab and group drops: process membership, split layout and reload');
+      const editRoot=path.join(profile,'editor-fixture');fs.mkdirSync(editRoot);
+      const editPath=path.join(editRoot,'notes.md');fs.writeFileSync(editPath,'\ufeff# Original\r\n');
+      await evaluate(`(async()=>{const token=new URL(location.href).searchParams.get('token');await fetch('/api/workspaces?token='+encodeURIComponent(token),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:'File editing',cwd:${JSON.stringify(editRoot)}})});})()`);
+      await waitFor("document.getElementById('workspaceHeading').textContent==='File editing'");
+      win.webContents.send('cmux-command','shortcut.switchRightSidebarToFiles');
+      await waitFor("document.querySelector('[data-file-path=\"notes.md\"]') !== null");
+      await evaluate("document.querySelector('[data-file-path=\"notes.md\"]').click()");
+      await waitFor("document.querySelector('[data-file-action=edit]') !== null");
+      await evaluate("document.querySelector('[data-file-action=edit]').click();document.querySelector('.workspace-file-preview textarea').focus()");
+      await key('a',['control']);await win.webContents.insertText('# Edited 日本語\n');
+      await key('s',['control']);
+      await waitFor("document.querySelector('.workspace-file-preview [role=status]').textContent==='Saved'");
+      assert.equal(fs.readFileSync(editPath,'utf8'),'\ufeff# Edited 日本語\r\n');
+      fs.writeFileSync(editPath,'# External change\n');
+      await evaluate("(()=>{const editor=document.querySelector('.workspace-file-preview textarea');editor.value='# My draft\\n';editor.dispatchEvent(new Event('input'));editor.focus();})()");
+      await key('s',['control']);
+      await waitFor("document.querySelector('.workspace-file-preview [role=status]').textContent.includes('changed on disk')");
+      assert.equal(fs.readFileSync(editPath,'utf8'),'# External change\n');
+      const draftReload=new Promise(resolve=>win.webContents.once('did-finish-load',resolve));win.webContents.reload();await draftReload;
+      await waitFor("document.querySelector('.xterm-helper-textarea') !== null");
+      win.webContents.send('cmux-command','shortcut.switchRightSidebarToFiles');
+      await waitFor("document.querySelector('[data-file-path=\"notes.md\"]') !== null");
+      await evaluate("document.querySelector('[data-file-path=\"notes.md\"]').click()");
+      await waitFor("document.querySelector('.workspace-file-preview textarea')?.value==='# My draft\\n'");
+      fs.writeFileSync(path.join(__dirname,'../test-output/file-editor.png'),(await win.webContents.capturePage()).toPNG());
+      await evaluate("document.querySelector('[data-file-action=discard]').click()");
+      await waitFor("document.querySelector('.workspace-file-preview textarea')?.value==='# External change\\n'");
+      console.log('PASS file editing: keyboard save, UTF-8 BOM/CRLF, external conflict, persistent draft and discard/reload');
       assert.deepEqual(rendererErrors,[],'Renderer must complete without errors');
     } catch(error) {failed=true;console.error(error.stack||error);console.error(await evaluate("({terminals:[...document.querySelectorAll('.xterm')].map(node=>node.textContent),images:document.querySelectorAll('.xterm-image-layer').length,focused:document.activeElement.className})"));}
     finally {clearTimeout(deadline);win.destroy();app.quit();}

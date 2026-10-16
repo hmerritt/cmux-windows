@@ -18,7 +18,7 @@ It does not execute Apple SwiftUI or the macOS GhosttyKit binary.
 | Restoration | Full process restart retains workspace, four terminal processes represented by three visible splits, tab membership and nested split tree. Shell processes are recreated on full desktop exit. |
 | Display scaling | Desktop integration passes at 100% and 150%. |
 | Accessibility | Named tabs and tab panels verified in Chromium's native accessibility tree; Home/End navigation, palette selection, trapped dialog focus, background isolation and live OS screen-reader support verified in the desktop. |
-| Workspace files | Keyboard directory navigation and read-only UTF-8 previews through trusted desktop IPC. Tests reject traversal, outside-workspace junctions, binary content and previews over 1 MB. |
+| Workspace files | Keyboard directory navigation, UTF-8 previews and explicit file editing through trusted desktop IPC. Ctrl+S saves with revision checks, BOM/CRLF preservation, draft recovery and discard/reload. Tests reject traversal, outside-workspace junctions, binary content and files over 1 MB. |
 | Settings search | Rapid native text insertion and Escape-to-clear retain the controlled query without resetting typed text. |
 | New UI translations | Rendering-engine and file-browser copy supplied in all nine supported locales; tests check locale selection and missing strings. |
 | Distribution | `test:packaged` launches the built executable and checks ConPTY, commands, WebGL, inline image pixels, file IPC, keyboard splits and normal close. Unsigned NSIS installer builds successfully. |
@@ -46,7 +46,9 @@ npm run test:packaged
 The original tab-drag regression was committed failing in `8675e3060d`;
 cross-workspace drops were committed failing in `1165162f6e`. The same
 `npm run test:parity` command passes with both implementations. Unit/model tests
-cover 19 behaviors. Desktop tests use isolated profiles and private pipes.
+cover 20 behaviors. File-editing regression `3cf324a876` fails with
+`node --test tests/workspace-files.test.cjs`; the same command passes with the
+editor implementation. Desktop tests use isolated profiles and private pipes.
 They do not replace or stop an already running user build.
 
 ## Remaining gaps
@@ -62,8 +64,8 @@ They do not replace or stop an already running user build.
   between workspaces through sidebar row drops. Cross-window tab dragging and the full Bonsplit interaction model
   remain. The optional global tab bar is a separate inherited surface.
 - **Settings and sidebar:** the upstream Windows settings UI remains; the macOS
-  settings window is not recreated 1:1. The file browser is read-only. File
-  editing, Git/diff, rendered Markdown and the other macOS right-sidebar tools
+  settings window is not recreated 1:1. The file editor supports existing UTF-8
+  files up to 1 MB; creating/renaming files, Git/diff, rendered Markdown and the other macOS right-sidebar tools
   still need implementation.
 - **Localization:** 197 unambiguous existing messages are reused from nine
   catalogs/locales, and this batch adds translated renderer/file-browser copy.
