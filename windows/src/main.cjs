@@ -758,8 +758,8 @@ if (!hasLock) {
   ipcMain.handle('git:status',trustedIpcHandler(async(_event,root)=>{
     try{return {ok:true,...await workspaceGit.status(root)};}catch(error){return {ok:false,error:error.message};}
   },null));
-  ipcMain.handle('git:diff',trustedIpcHandler(async(_event,root,filePath)=>{
-    try{return {ok:true,...await workspaceGit.diff(root,filePath)};}catch(error){return {ok:false,error:error.message};}
+  ipcMain.handle('git:diff',trustedIpcHandler(async(_event,root,filePath,options)=>{
+    try{return {ok:true,...await workspaceGit.diff(root,filePath,options)};}catch(error){return {ok:false,error:error.message};}
   },null));
   app.on('accessibility-support-changed',(_event,enabled)=>mainWindow?.webContents.send('cmux-accessibility',enabled));
   ipcMain.handle('shortcuts:update', trustedIpcHandler((_event,id,value,reset)=>publishShortcutSnapshot(shortcutConfig.update(id,value,reset)),null));

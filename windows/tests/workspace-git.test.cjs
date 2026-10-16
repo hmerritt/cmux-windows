@@ -43,9 +43,9 @@ test('expanded diff context includes unchanged lines without changing file revie
   try {
     git('init');git('config','user.name','Test');git('config','user.email','test@example.invalid');
     const original=Array.from({length:60},(_,i)=>`unchanged ${i}`);
-    await fs.writeFile(path.join(root,'context.txt'),original.join('\n')+'\n');git('add','.');git('commit','-m','Fixture');
+    await fs.writeFile(path.join(root,'context.txt'),original.join('\n'));git('add','.');git('commit','-m','Fixture');
     const changed=[...original];changed[4]='first change';changed[50]='second change';
-    await fs.writeFile(path.join(root,'context.txt'),changed.join('\n')+'\n');
+    await fs.writeFile(path.join(root,'context.txt'),changed.join('\n'));
     const viewer=new WorkspaceGit(),collapsed=await viewer.diff(root,'context.txt');
     assert(!collapsed.unstaged.includes('unchanged 25'));
     const expanded=await viewer.diff(root,'context.txt',{expandUnchanged:true});
@@ -53,5 +53,28 @@ test('expanded diff context includes unchanged lines without changing file revie
     assert.equal(expanded.revision,collapsed.revision,'Display preferences cannot invalidate a viewed file');
     assert(expanded.unstaged.includes('unchanged 0') && expanded.unstaged.includes('unchanged 59'));
     assert.equal(git('diff','--cached').length,0,'Context expansion must not alter the index');
+    const run=viewer.git.bind(viewer);let modified=false;
+    viewer.git=async(directory,args)=>{
+      if(args.includes('--unified=2147483647') && !modified){modified=true;await fs.appendFile(path.join(root,'context.txt'),'concurrent change\n');}
+      return run(directory,args);
+    };
+    await assert.rejects(viewer.diff(root,'context.txt',{expandUnchanged:true}),/file_changed/,'Never bind a changed expanded patch to an older viewed revision');
+
+  }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
+test('oversized full context falls back visibly while keeping bounded compact diffs and review identity',async()=>{
+  const {WorkspaceGit}=require('../src/workspace-git.cjs');
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'cmux-git-context-limit-'));
+  const git=(...args)=>execFileSync('git',['-C',root,...args],{windowsHide:true,stdio:'pipe'});
+  try {
+    git('init');git('config','user.name','Test');git('config','user.email','test@example.invalid');
+    const text=('wide context '.repeat(24)+'\n').repeat(16000);
+    await fs.writeFile(path.join(root,'large.txt'),text);git('add','.');git('commit','-m','Fixture');
+    await fs.writeFile(path.join(root,'large.txt'),'changed first line\n'+text.slice(text.indexOf('\n')+1));
+    const viewer=new WorkspaceGit(),compact=await viewer.diff(root,'large.txt'),expanded=await viewer.diff(root,'large.txt',{expandUnchanged:true});
+    assert.equal(expanded.contextLimited,true);
+    assert.equal(expanded.revision,compact.revision);assert.equal(expanded.unstaged,compact.unstaged);
+    assert(expanded.unstaged.includes('+changed first line'));assert(expanded.unstaged.length<10000);
   }finally{await fs.rm(root,{recursive:true,force:true});}
 });

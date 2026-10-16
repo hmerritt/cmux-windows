@@ -61,7 +61,7 @@ The runtime listens on `\\.\pipe\cmux-windows` on Windows and falls back to a te
 
 Implemented in this milestone:
 
-- Git diffs support split/unified layouts with old/new line numbers, persisted word wrap and change-background controls. Display preferences share the native JSON schema; `CMUX_DIFF_VIEWER_PREFS_PATH` overrides the file location.
+- Git diffs support split/unified layouts with old/new line numbers, persisted word wrap, word-level highlights, change-background and indicator controls, and bounded expanded context. Display preferences share the native JSON schema; `CMUX_DIFF_VIEWER_PREFS_PATH` overrides the file location.
 - Workspace file tools create, rename and duplicate files/folders, and move entries to the Windows Recycle Bin. Toolbar and accessible context-menu actions share the same serialized backend.
 - Windows desktop shell with workspace sidebar, surface tabs, split panes, and command palette for commands, workspaces, panes, and Settings categories.
 - Terminal panes backed by Windows ConPTY, using node-pty's bundled ConPTY DLL. Settings > Terminal offers an optional WebGL renderer; SIXEL and iTerm inline images are supported.

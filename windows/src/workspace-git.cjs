@@ -4,6 +4,7 @@ const {promisify}=require('node:util');
 const crypto=require('node:crypto');
 const {WorkspaceFiles}=require('./workspace-files.cjs');
 const run=promisify(execFile);
+const changeIdentity=patch=>patch.split('\n').filter(line=>!line.startsWith(' ') && !line.startsWith('@@') && !line.startsWith('\\')).join('\n');
 class WorkspaceGit {
   constructor(){this.files=new WorkspaceFiles();}
   async git(root,args) {
@@ -26,10 +27,11 @@ class WorkspaceGit {
     }
     return {root,entries:entries.slice(0,2000),truncated:entries.length>2000};
   }
-  async diff(directory,filePath) {
+  async diff(directory,filePath,options={}) {
     const status=await this.status(directory),entry=status.entries.find(item=>item.path===filePath);
     if(!entry)throw Error('unknown_file');
-    let staged='',unstaged='',binary=false,limited=false,stamp='';
+    let staged='',unstaged='',binary=false,limited=false,stamp='',contextLimited=false;
+    const expanded=options?.expandUnchanged===true;
     if(entry.status==='??') {
       try {
         const file=await this.files.read(status.root,entry.path);
@@ -42,12 +44,25 @@ class WorkspaceGit {
     } else {
       const paths=entry.originalPath?[entry.originalPath,entry.path]:[entry.path];
       [staged,unstaged]=await Promise.all([
-        this.git(status.root,['diff','--cached','--no-ext-diff','--no-textconv','--no-color','--find-renames','--',...paths]),
-        this.git(status.root,['diff','--no-ext-diff','--no-textconv','--no-color','--find-renames','--',...paths])
+        this.git(status.root,['diff','--cached','--unified=3','--no-ext-diff','--no-textconv','--no-color','--find-renames','--',...paths]),
+        this.git(status.root,['diff','--unified=3','--no-ext-diff','--no-textconv','--no-color','--find-renames','--',...paths])
       ]);
       binary=/^Binary files .+ differ$/m.test(staged+'\n'+unstaged);
     }
-    return {root:status.root,path:entry.path,status:entry.status,staged,unstaged,binary,limited,revision:crypto.createHash('sha256').update(staged+'\0'+unstaged+'\0'+stamp).digest('hex')};
+    const revision=crypto.createHash('sha256').update(staged+'\0'+unstaged+'\0'+stamp).digest('hex');
+    if(expanded && entry.status!=='??') {
+      const paths=entry.originalPath?[entry.originalPath,entry.path]:[entry.path];
+      const identity=[changeIdentity(staged),changeIdentity(unstaged)];
+      try {
+        const expandedDiffs=await Promise.all([
+          this.git(status.root,['diff','--cached','--unified=2147483647','--no-ext-diff','--no-textconv','--no-color','--find-renames','--',...paths]),
+          this.git(status.root,['diff','--unified=2147483647','--no-ext-diff','--no-textconv','--no-color','--find-renames','--',...paths])
+        ]);
+        if(expandedDiffs.some((patch,index)=>changeIdentity(patch)!==identity[index]))throw Error('file_changed');
+        [staged,unstaged]=expandedDiffs;
+      }catch(error){if(error.message==='diff_too_large')contextLimited=true;else throw error;}
+    }
+    return {root:status.root,path:entry.path,status:entry.status,staged,unstaged,binary,limited,expanded,contextLimited,revision};
   }
 }
 module.exports={WorkspaceGit};

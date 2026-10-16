@@ -26,7 +26,7 @@ It does not execute Apple SwiftUI or the macOS GhosttyKit binary.
 | File editor actions | Save and Word Wrap use the shared shortcut registry, including live rebinding/unbinding. Word wrap is persisted and reflows open editors. Desktop tests cover default/rebound keys and the canonical menu save action. |
 | Markdown panes | File-browser action opens a restored document pane with Preview/Text modes, live disk updates, shared editing, syntax highlighting, tables, local images, Mermaid diagrams, contextual zoom and find across formatted text. Shared upstream parser and sanitizer assets are shipped locally. |
 | Git diff panes | Canonical action opens a read-only viewer for staged, working, renamed and untracked changes. File search, file/hunk navigation, scrolling and persistent viewed marks work through contextual shortcuts. Git runs without shell interpolation, external diff drivers or text conversion; literal filenames and binary/large-file limits are tested. |
-| Diff display preferences | Unified and split layouts retain real old/new line numbers, unequal replacement blocks and missing-newline markers. Word wrap, line numbers and change backgrounds update live across panes and survive reload. A shared JSON preference file uses the native schema and `CMUX_DIFF_VIEWER_PREFS_PATH` override; writes merge serially and replace atomically. |
+| Diff display preferences | Unified and split layouts retain real old/new line numbers, unequal replacement blocks and missing-newline markers. Word wrap, word-level highlights, line numbers, change backgrounds, bars/classic/no indicators and expanded unchanged context update live across panes and survive reload. Context reads stay bounded, preserve viewed-file identity and reject concurrent changes; oversized full context shows a visible compact-context notice. A shared JSON preference file uses the native schema and `CMUX_DIFF_VIEWER_PREFS_PATH` override; writes merge serially and replace atomically. |
 | Settings search | Rapid native text insertion and Escape-to-clear retain the controlled query without resetting typed text. |
 | New UI translations | Rendering-engine and file-browser copy supplied in all nine supported locales; tests check locale selection and missing strings. |
 | Distribution | `test:packaged` launches the built executable and checks ConPTY, commands, WebGL, inline image pixels, file IPC, keyboard splits, Markdown/local images/Mermaid, real Git diffs, directory search, file creation/rename/duplicate, Recycle Bin and normal close. Unsigned NSIS installer builds successfully. |
@@ -62,7 +62,7 @@ npm run test:packaged
 The original tab-drag regression was committed failing in `8675e3060d`;
 cross-workspace drops were committed failing in `1165162f6e`. The same
 `npm run test:parity` command passes with both implementations. Unit/model tests
-cover 30 behaviors. File-editing regression `3cf324a876` fails with
+cover 33 behaviors. File-editing regression `3cf324a876` fails with
 `node --test tests/workspace-files.test.cjs`; the same command passes with the
 editor implementation. Desktop tests use isolated profiles and private pipes.
 Markdown regression `8918250cad` and Git-viewer regression `e38392c05f`
@@ -84,6 +84,10 @@ Diff-layout regression `c9de99c025` fails with `npm run test:documents`;
 the same command passes with split/unified display, line-number geometry, shared
 preferences and renderer reload. Parser/store tests cover line identity, unequal
 changes, missing newlines, file persistence and invalid preferences.
+Diff-detail regression `ad56597ab1` fails with `node --test tests/workspace-git.test.cjs`
+and `npm run test:documents`; both pass with word highlights, indicator modes and
+expanded context. Model checks cover Unicode, bounded word comparisons, output
+limits and changes during expanded reads.
 They do not replace or stop an already running user build.
 
 ## Remaining gaps
@@ -103,8 +107,8 @@ They do not replace or stop an already running user build.
   files up to 1 MB. File moves, multiple selection, complete explorer menus and the other
   macOS right-sidebar tools remain. Paired macOS visual comparison of the dock
   remains. Markdown math/Vega and exhaustive rendering parity remain. Git diff
-  branch/patch/last-turn sources, review comments, word-level highlights, expanded
-  context, indicators and the complete macOS diff presentation remain. The audited
+  branch/patch/last-turn sources, review comments, syntax highlighting, generated-file
+  handling and the complete macOS diff presentation remain. The audited
   native diff viewer exposes staged/unstaged viewing; no index-mutating stage or
   unstage action was found, so the earlier staging gap was an unsupported assumption.
 - **Localization:** 200 unambiguous existing messages are reused from nine

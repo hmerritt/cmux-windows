@@ -35,3 +35,21 @@ test('diff preferences survive process recreation, validate native keys and seri
     await store.merge({layout:'unified'});assert.deepEqual(await store.get(),{layout:'unified'});
   }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('word highlights retain exact text, isolate replacements and handle Unicode and bounded large changes',async()=>{
+  const {diffWords,wordDiffRows}=await import('../renderer/diff-words.mjs');
+  const {parseDiffLines}=await import('../renderer/diff-lines.mjs');
+  const diff=diffWords('const color = "red"; keep = 1','const color = "blue"; keep = 2');
+  assert.equal(diff.before.filter(part=>part.changed).map(part=>part.text).join(''),'red1');
+  assert.equal(diff.after.filter(part=>part.changed).map(part=>part.text).join(''),'blue2');
+  for(const [before,after] of [['café 日本語 👩🏽‍💻 مرحبا','café 한국어 👩🏽‍💻 أهلا'],['','insert'],['deleted',''],['same','same'],['a '.repeat(300)+'old end','b '.repeat(300)+'new end']]) {
+    const result=diffWords(before,after,{maxCells:64});
+    assert.equal(result.before.map(part=>part.text).join(''),before);
+    assert.equal(result.after.map(part=>part.text).join(''),after);
+    assert(result.work<=64);
+  }
+  const rows=parseDiffLines('@@ -1 +1 @@\n-Line 3\n+Changed 3\n')[0].rows;
+  const highlighted=wordDiffRows(rows);
+  assert.equal(highlighted.get(rows[0]).filter(part=>part.changed).map(part=>part.text).join(''),'Line');
+  assert.equal(highlighted.get(rows[1]).filter(part=>part.changed).map(part=>part.text).join(''),'Changed');
+});

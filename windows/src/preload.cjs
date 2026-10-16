@@ -16,7 +16,7 @@ contextBridge.exposeInMainWorld("cmuxNative", {
   setDiffPreferences:updates=>ipcRenderer.invoke('diff:preferences:set',updates),
   onDiffPreferencesChanged(callback){ipcRenderer.on('diff:preferences-changed',(_event,preferences)=>callback(preferences));},
   workspaceGitStatus:root=>ipcRenderer.invoke('git:status',root),
-  workspaceGitDiff:(root,filePath)=>ipcRenderer.invoke('git:diff',root,filePath),
+  workspaceGitDiff:(root,filePath,options)=>ipcRenderer.invoke('git:diff',root,filePath,options),
   writeWorkspaceFile:(root,relative,text,revision)=>ipcRenderer.invoke('files:write',root,relative,text,revision),
   onAccessibilitySupport(callback){ipcRenderer.on('cmux-accessibility',(_event,enabled)=>callback(enabled));},
   getShortcuts: () => ipcRenderer.invoke('shortcuts:get'),

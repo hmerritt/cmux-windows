@@ -157,11 +157,11 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
       await delay(100);
     }
     assert(diffReady,'Packaged Git IPC and real diff pane must load');
-    const preferences=await evaluate("window.cmuxNative.setDiffPreferences({layout:'split',wordWrap:true})");
+    const preferences=await evaluate("window.cmuxNative.setDiffPreferences({layout:'split',wordWrap:true,wordDiffs:true,expandUnchanged:true,diffIndicators:'classic'})");
     assert(preferences.ok,'Packaged display preferences must save');
     let splitReady=false;
     for(let i=0;i<100;i++) {
-      splitReady=await evaluate("document.querySelector('.diff-pane')?.dataset.diffLayout==='split' && !!document.querySelector('.diff-split-row .diff-old-line')");
+      splitReady=await evaluate("document.querySelector('.diff-pane')?.dataset.diffLayout==='split' && document.querySelector('.diff-pane')?.dataset.expandUnchanged==='true' && document.querySelector('.diff-pane')?.dataset.diffIndicators==='classic' && !!document.querySelector('.diff-split-row .diff-old-line') && document.querySelector('.diff-patch').textContent.includes('# Packaged document')");
       if(splitReady)break;
       await delay(100);
     }

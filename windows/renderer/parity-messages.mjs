@@ -102,3 +102,16 @@ const diffDisplayLabels={
   ja:['統合表示','左右分割','折り返し','行番号','変更箇所の背景','差分表示の設定を保存できません。']
 };
 for(const [locale,values] of Object.entries(diffDisplayLabels))for(const [index,key] of ['diffUnified','diffSplit','diffWordWrap','diffLineNumbers','diffBackgrounds','diffPreferenceError'].entries())messages[locale][key]=values[index];
+
+const diffDetailLabels={
+  en:['Word diffs','Expand unchanged context','Change indicators','Bars','Classic signs','No indicators','Full context exceeds the display limit. Showing compact context.'],
+  de:['Wortunterschiede','Unveränderten Kontext erweitern','Änderungsmarkierungen','Balken','Klassische Zeichen','Keine Markierungen','Der vollständige Kontext überschreitet das Anzeigelimit. Kompakter Kontext wird angezeigt.'],
+  fr:['Différences par mot','Développer le contexte inchangé','Indicateurs de modification','Barres','Signes classiques','Aucun indicateur','Le contexte complet dépasse la limite d’affichage. Le contexte réduit est affiché.'],
+  es:['Diferencias de palabras','Expandir contexto sin cambios','Indicadores de cambios','Barras','Signos clásicos','Sin indicadores','El contexto completo supera el límite de visualización. Se muestra el contexto reducido.'],
+  ar:['فروق الكلمات','توسيع السياق غير المتغير','مؤشرات التغيير','أشرطة','علامات تقليدية','بلا مؤشرات','يتجاوز السياق الكامل حد العرض. يُعرض السياق المختصر.'],
+  'zh-Hans':['单词差异','展开未更改的上下文','变更标记','竖条','传统符号','无标记','完整上下文超出显示限制，正在显示精简上下文。'],
+  'zh-Hant':['字詞差異','展開未變更的上下文','變更標記','直條','傳統符號','無標記','完整上下文超出顯示限制，正在顯示精簡上下文。'],
+  ko:['단어 차이','변경되지 않은 문맥 펼치기','변경 표시','막대','기본 기호','표시 없음','전체 문맥이 표시 제한을 초과합니다. 축소된 문맥을 표시합니다.'],
+  ja:['単語の差分','変更のない前後の行を展開','変更マーカー','バー','従来の記号','マーカーなし','全体の前後の行が表示上限を超えています。省略した前後の行を表示します。']
+};
+for(const [locale,values] of Object.entries(diffDetailLabels))for(const [index,key] of ['diffWordDiffs','diffExpandContext','diffIndicators','diffIndicatorBars','diffIndicatorClassic','diffIndicatorNone','diffContextLimit'].entries())messages[locale][key]=values[index];

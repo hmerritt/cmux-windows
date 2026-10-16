@@ -1,19 +1,22 @@
 import {parityText} from './parity-messages.mjs';
 import {parseDiffLines,splitDiffRows} from './diff-lines.mjs';
+import {wordDiffRows} from './diff-words.mjs';
 
 function element(tag,className,text){const node=document.createElement(tag);node.className=className;if(text!==undefined)node.textContent=text;return node;}
 export function createDiffPanes() {
   const sessions=new Map();
-  let preferences={layout:'unified',wordWrap:false,lineNumbers:true,showBackgrounds:true},savingPreferences=false;
+  let preferences={layout:'unified',wordWrap:false,lineNumbers:true,showBackgrounds:true,wordDiffs:false,expandUnchanged:false,diffIndicators:'bars'},savingPreferences=false;
   function applyPreferences(updates) {
     preferences={...preferences,...updates};
     for(const session of sessions.values()) {
-      for(const key of ['layout','wordWrap','lineNumbers','showBackgrounds'])session.host.dataset[key==='layout'?'diffLayout':key]=String(preferences[key]);
+      for(const key of ['layout','wordWrap','lineNumbers','showBackgrounds','wordDiffs','expandUnchanged','diffIndicators'])session.host.dataset[key==='layout'?'diffLayout':key]=String(preferences[key]);
       for(const button of session.toolbar.querySelectorAll('[data-diff-layout],[data-diff-option]')) {
         button.setAttribute('aria-pressed',String(button.dataset.diffLayout?preferences.layout===button.dataset.diffLayout:Boolean(preferences[button.dataset.diffOption])));
         button.disabled=savingPreferences;
       }
-      if(session.current && session.renderedLayout!==preferences.layout)renderPatch(session,session.current);
+      session.indicators.value=preferences.diffIndicators;session.indicators.disabled=savingPreferences;
+      if(session.selected && session.requestedExpanded!==preferences.expandUnchanged)selectFile(session,session.selected);
+      else if(session.current && (session.renderedLayout!==preferences.layout || session.renderedWordDiffs!==preferences.wordDiffs))renderPatch(session,session.current);
     }
   }
   async function updatePreferences(updates) {
@@ -21,7 +24,7 @@ export function createDiffPanes() {
     savingPreferences=true;applyPreferences({});
     try {
       const result=await window.cmuxNative.setDiffPreferences(updates);
-      if(result?.ok)applyPreferences(result.preferences);
+      if(result?.ok){applyPreferences(result.preferences);for(const session of sessions.values())session.preferenceNotice.hidden=true;}
       else for(const session of sessions.values()){session.preferenceNotice.textContent=parityText('diffPreferenceError');session.preferenceNotice.hidden=false;}
     }catch{for(const session of sessions.values()){session.preferenceNotice.textContent=parityText('diffPreferenceError');session.preferenceNotice.hidden=false;}}
     finally{savingPreferences=false;applyPreferences({});}
@@ -56,7 +59,9 @@ export function createDiffPanes() {
   function renderPatch(session,result) {
     const scrollTop=session.patch.scrollTop;
     const previousHunk=session.renderedRevision===result.revision?session.hunk:-1;
-    session.patch.replaceChildren();session.hunk=-1;session.renderedLayout=preferences.layout;session.renderedRevision=result.revision;
+    session.patch.replaceChildren();session.hunk=-1;session.renderedLayout=preferences.layout;session.renderedWordDiffs=preferences.wordDiffs;session.renderedRevision=result.revision;
+    session.contextNotice.hidden=!result.contextLimited;
+    const wordBudget={remaining:2000000};
     if(result.binary)session.patch.append(element('p','',parityText('binaryDiff')));
     if(result.limited)session.patch.append(element('p','',parityText('previewLimit')));
     for(const [label,text] of [['stagedChanges',result.staged],['workingChanges',result.unstaged]]) {
@@ -71,7 +76,15 @@ export function createDiffPanes() {
         const hunk=element('section','diff-hunk');hunk.dataset.diffLayout=preferences.layout;hunk.dataset.hunkIndex=String(session.patch.querySelectorAll('.diff-hunk').length);
         hunk.append(element('pre','diff-line diff-range',block.header));
         const lineNumber=(value,side)=>{const number=element('span',`diff-line-number diff-${side}-line`,value??'');number.setAttribute('aria-hidden','true');return number;};
-        const code=row=>{const text=element('pre',`diff-line diff-${row?.kind||'empty'}`,row?.text||' ');if(row?.note)text.append(element('span','diff-line-note','\n'+row.note));return text;};
+        const wordSegments=preferences.wordDiffs?wordDiffRows(block.rows,wordBudget):new Map();
+        const code=row=>{
+          const text=element('pre',`diff-line diff-${row?.kind||'empty'}`);
+          if(row) {
+            const sign=element('span','diff-sign',row.text[0]);sign.setAttribute('aria-hidden','true');text.append(sign);
+            for(const part of wordSegments.get(row)||[{text:row.text.slice(1),changed:false}])text.append(element('span',part.changed?'diff-word-change':'',part.text));
+          }else text.textContent=' ';
+          if(row?.note)text.append(element('span','diff-line-note','\n'+row.note));return text;
+        };
         if(preferences.layout==='split') {
           for(const pair of splitDiffRows(block.rows)) {
             const row=element('div','diff-split-row');
@@ -95,11 +108,13 @@ export function createDiffPanes() {
     session.selected=filePath;renderFiles(session);
     if(changed){session.patch.replaceChildren(element('p','',parityText('loading')));session.revision=null;session.current=null;}
     try {
-      const result=await window.cmuxNative.workspaceGitDiff(session.panel.cwd,filePath);
+      session.requestedExpanded=preferences.expandUnchanged;
+      const result=await window.cmuxNative.workspaceGitDiff(session.panel.cwd,filePath,{expandUnchanged:session.requestedExpanded});
       if(session.disposed || request!==session.request)return;
       if(!result?.ok){session.current=null;session.revision=null;session.patch.replaceChildren(element('p','',parityText(result?.error==='diff_too_large'?'diffLimit':'gitError')));return;}
       session.revisions.set(filePath,result.revision);session.current=result;updateViewed(session);
-      if(session.revision!==result.revision){session.revision=result.revision;renderPatch(session,result);if(changed)session.patch.scrollTop=0;}
+      const signature=JSON.stringify([result.revision,result.expanded,result.contextLimited]);
+      if(session.revision!==result.revision || session.contentSignature!==signature){session.revision=result.revision;session.contentSignature=signature;renderPatch(session,result);if(changed)session.patch.scrollTop=0;}
     }catch{if(!session.disposed && request===session.request)session.patch.replaceChildren(element('p','',parityText('gitError')));}
   }
   async function refresh(session) {
@@ -130,20 +145,24 @@ export function createDiffPanes() {
           const button=element('button','',parityText(layout==='split'?'diffSplit':'diffUnified'));button.type='button';button.dataset.diffLayout=layout;
           button.onclick=()=>updatePreferences({layout});toolbar.append(button);
         }
-        for(const [key,label] of [['wordWrap','diffWordWrap'],['lineNumbers','diffLineNumbers'],['showBackgrounds','diffBackgrounds']]) {
+        for(const [key,label] of [['wordWrap','diffWordWrap'],['lineNumbers','diffLineNumbers'],['showBackgrounds','diffBackgrounds'],['wordDiffs','diffWordDiffs'],['expandUnchanged','diffExpandContext']]) {
           const button=element('button','',parityText(label));button.type='button';button.dataset.diffOption=key;
           button.onclick=()=>updatePreferences({[key]:!preferences[key]});toolbar.append(button);
         }
+        const indicators=element('select','diff-indicator-mode');indicators.dataset.diffIndicators='';indicators.setAttribute('aria-label',parityText('diffIndicators'));
+        for(const [value,key] of [['bars','diffIndicatorBars'],['classic','diffIndicatorClassic'],['none','diffIndicatorNone']]){const option=element('option','',parityText(key));option.value=value;indicators.append(option);}
+        indicators.onchange=()=>updatePreferences({diffIndicators:indicators.value});toolbar.append(indicators);
+        const contextNotice=element('p','diff-notice',parityText('diffContextLimit'));contextNotice.setAttribute('role','status');contextNotice.hidden=true;
         const preferenceNotice=element('p','diff-notice');preferenceNotice.setAttribute('role','status');preferenceNotice.hidden=true;
         const notice=element('p','diff-notice',parityText('truncated'));notice.hidden=true;
         const split=element('div','diff-layout');
         const list=element('div','diff-file-list');list.setAttribute('role','listbox');list.setAttribute('aria-label',parityText('changedFiles'));
         const patch=element('div','diff-patch');patch.tabIndex=0;patch.setAttribute('role','region');patch.setAttribute('aria-label',parityText('diffPane'));
-        session={panel,host,toolbar,preferenceNotice,search,list,patch,notice,entries:[],selected:null,request:0,revision:null,current:null,revisions:new Map(),viewed:{},viewedLoaded:false,hunk:-1,disposed:false,loading:false};
+        session={panel,host,toolbar,indicators,contextNotice,preferenceNotice,search,list,patch,notice,entries:[],selected:null,request:0,revision:null,current:null,revisions:new Map(),viewed:{},viewedLoaded:false,hunk:-1,disposed:false,loading:false};
         search.oninput=()=>renderFiles(session);
         search.onkeydown=event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();search.value='';renderFiles(session);host.focus();}};
         reload.onclick=()=>refresh(session);
-        toolbar.prepend(search,reload);split.append(list,patch);host.append(toolbar,notice,preferenceNotice,split);
+        toolbar.prepend(search,reload);split.append(list,patch);host.append(toolbar,notice,preferenceNotice,contextNotice,split);
         sessions.set(panel.id,session);applyPreferences({});session.timer=setInterval(()=>refresh(session),3000);
       }
       if(session.host.parentElement!==body){body.replaceChildren(session.host);refresh(session);}

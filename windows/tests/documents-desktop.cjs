@@ -108,17 +108,30 @@ app.once('browser-window-created',(_event,win)=>{
       assert(await evaluate("!!document.querySelector('[data-diff-option=wordDiffs]') && !!document.querySelector('[data-diff-option=expandUnchanged]')"),'Native word-diff and context controls must be available');
       await evaluate("document.querySelector('[data-git-path=\"second.txt\"]').click()");
       await waitFor("document.querySelector('.diff-patch').textContent.includes('+Changed 3')");
+      await evaluate("document.querySelector('.diff-pane').focus()");await key('v');
+      await waitFor("document.querySelector('[data-git-path=\"second.txt\"]').dataset.viewed==='true'");
       await evaluate("document.querySelector('[data-diff-option=wordDiffs]').click()");
       await waitFor("!!document.querySelector('.diff-word-change')");
       assert(await evaluate("[...document.querySelectorAll('.diff-word-change')].some(node=>node.textContent==='Changed')"),'Only replaced words are highlighted');
       await evaluate("document.querySelector('[data-diff-option=expandUnchanged]').click()");
       await waitFor("document.querySelector('.diff-patch').textContent.includes('Line 25')");
-      await evaluate("const selector=document.querySelector('[data-diff-indicators]');selector.value='classic';selector.dispatchEvent(new Event('change',{bubbles:true}))");
+      assert(await evaluate("document.querySelector('[data-git-path=\"second.txt\"]').dataset.viewed==='true'"),'Expanding context preserves viewed state');
+      assert(await evaluate("getComputedStyle(document.querySelector('.diff-added')).boxShadow!=='none'"),'Bars remain visible with change backgrounds disabled');
+      await evaluate("{const selector=document.querySelector('select[data-diff-indicators]');selector.value='classic';selector.dispatchEvent(new Event('change',{bubbles:true}));}");
       await waitFor("[...document.querySelectorAll('.diff-pane')].every(pane=>pane.dataset.diffIndicators==='classic')");
       assert(await evaluate("getComputedStyle(document.querySelector('.diff-sign')).display!=='none'"),'Classic indicators show the patch signs');
       fs.mkdirSync(path.resolve(__dirname,'../test-output'),{recursive:true});
+      fs.writeFileSync(path.resolve(__dirname,'../test-output/diff-details.png'),(await win.webContents.capturePage()).toPNG());
+      await evaluate("{const selector=document.querySelector('select[data-diff-indicators]');selector.value='none';selector.dispatchEvent(new Event('change',{bubbles:true}));}");
+      await waitFor("document.querySelector('.diff-pane').dataset.diffIndicators==='none'");
+      assert(await evaluate("getComputedStyle(document.querySelector('.diff-sign')).display==='none' && getComputedStyle(document.querySelector('.diff-added')).boxShadow==='none'"),'None removes both signs and bars');
+      await evaluate("document.querySelector('[data-diff-option=expandUnchanged]').click()");
+      await waitFor("!document.querySelector('.diff-patch').textContent.includes('Line 25')");
+      await evaluate("document.querySelector('[data-diff-option=wordDiffs]').click()");
+      await waitFor("!document.querySelector('.diff-word-change')");
+      fs.mkdirSync(path.resolve(__dirname,'../test-output'),{recursive:true});
       fs.writeFileSync(path.resolve(__dirname,'../test-output/documents.png'),(await win.webContents.capturePage()).toPNG());
-      console.log('PASS Git diff: real changes, viewed marks, navigation/search, split/unified layouts, line numbers and persisted display preferences');
+      console.log('PASS Git diff: real changes, viewed marks, navigation/search, split/unified layouts, line numbers, word diffs, context, indicators and persisted display preferences');
     }catch(error){failed=true;console.error(error.stack||error);}
     finally{clearTimeout(deadline);win.destroy();app.quit();}
   });

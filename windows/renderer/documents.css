@@ -55,3 +55,13 @@
 .diff-pane[data-line-numbers=false] .diff-unified-row { grid-template-columns:minmax(0,1fr); }
 .diff-pane[data-show-backgrounds=false] .diff-added,
 .diff-pane[data-show-backgrounds=false] .diff-removed { background:transparent; }
+
+.diff-indicator-mode { color:inherit; background:#242522; border:1px solid #ffffff20; border-radius:4px; padding:4px 8px; }
+.diff-sign { display:none; }
+.diff-pane[data-diff-indicators=classic] .diff-sign { display:inline; }
+.diff-pane[data-diff-indicators=bars] .diff-added { box-shadow:inset 3px 0 #2ea043; }
+.diff-pane[data-diff-indicators=bars] .diff-removed { box-shadow:inset 3px 0 #f85149; }
+.diff-added .diff-word-change { background:#2ea04366; border-radius:2px; }
+.diff-removed .diff-word-change { background:#f8514966; border-radius:2px; }
+
+.diff-line { min-height:1.6em; }
