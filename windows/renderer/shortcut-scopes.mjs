@@ -5,6 +5,7 @@ const terminal = `toggleTerminalCopyMode sendCtrlFToTerminal sizeTerminalToMyWin
 const browser = `focusBrowserAddressBar browserBack browserForward browserReload browserHardReload browserZoomIn browserZoomOut browserZoomReset toggleBrowserDeveloperTools showBrowserJavaScriptConsole toggleBrowserFocusMode toggleBrowserDesignMode`;
 const diff=`diffViewerScrollDown diffViewerScrollUp diffViewerScrollHalfPageDown diffViewerScrollHalfPageUp diffViewerScrollDownEmacs diffViewerScrollUpEmacs diffViewerScrollToBottom diffViewerScrollToTop diffViewerOpenFileSearch diffViewerNextFile diffViewerPreviousFile diffViewerNextHunk diffViewerPreviousHunk diffViewerToggleViewed`;
 export const scopes = Object.fromEntries([
+  ['findInDirectory','application'],
   ['openDiffViewer','application'],...diff.split(' ').map(id=>[id,'diff']),
   ...['markdownZoomIn','markdownZoomOut','markdownZoomReset'].map(id=>[id,'markdown']),
   ['switchRightSidebarToFiles','application'],['fileExplorerOpenSelection','files'],['fileExplorerOpenSelectionFinderAlias','files'],

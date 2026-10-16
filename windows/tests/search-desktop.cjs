@@ -29,7 +29,9 @@ app.once('browser-window-created',(_event,win)=>win.webContents.once('did-finish
     await waitFor("document.querySelectorAll('.workspace-search-result').length===2");
     await key('a',['control']);await win.webContents.insertText('Needle');
     await waitFor("document.querySelectorAll('.workspace-search-result').length===1");
-    await key('ArrowDown');await key('Enter');
+    await key('Down');
+    await waitFor("document.activeElement.matches('.workspace-search-result')");
+    await key('Enter');
     await waitFor("document.querySelector('.workspace-file-preview textarea')?.value.includes('Find Needle here')");
     assert.equal(await evaluate("document.querySelector('.workspace-file-preview textarea').selectionStart"),16);
     await evaluate("document.querySelector('[data-file-action=edit]').click()");
@@ -41,7 +43,7 @@ app.once('browser-window-created',(_event,win)=>win.webContents.once('did-finish
     await key('a',['control']);await win.webContents.insertText('absent');
     await waitFor("document.querySelectorAll('.workspace-search-result').length===0 && document.querySelector('.workspace-search-status').dataset.state==='ready'");
     console.log('PASS directory search: contextual keyboard/menu action, smart case, nested literal filenames, result line selection, shared editing and no results');
-  }catch(error){failed=true;console.error(error.stack||error);}
+  }catch(error){failed=true;console.error(error.stack||error);console.error(await evaluate("JSON.stringify({focus:document.activeElement?.outerHTML,preview:document.querySelector('.workspace-file-preview')?.textContent,status:document.querySelector('.workspace-search-status')?.textContent})"));}
   finally{clearTimeout(deadline);win.destroy();app.quit();}
 }));
 app.on('will-quit',event=>{if(failed){event.preventDefault();app.exit(1);}});

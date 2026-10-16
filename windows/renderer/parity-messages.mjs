@@ -35,6 +35,18 @@ const editorLabels={
 };
 for(const [locale,values] of Object.entries(editorLabels))for(const [index,key] of ['editFile','saveFile','discardChanges','unsavedChanges','fileSaved','fileConflict','saveError','draftRecovered','draftError'].entries())messages[locale][key]=values[index];
 export const parityText=key=>messages[currentLocale()]?.[key] || messages.en[key] || key;
+const searchLabels={
+  en:['Install ripgrep and add rg to PATH to search this directory.','Unable to search this directory.','Showing the first 500 matches. Narrow your search.'],
+  de:['Installieren Sie ripgrep und fügen Sie rg zu PATH hinzu, um dieses Verzeichnis zu durchsuchen.','Dieses Verzeichnis kann nicht durchsucht werden.','Die ersten 500 Treffer werden angezeigt. Grenzen Sie die Suche ein.'],
+  fr:['Installez ripgrep et ajoutez rg au PATH pour rechercher dans ce dossier.','Impossible de rechercher dans ce dossier.','Affichage des 500 premiers résultats. Affinez votre recherche.'],
+  es:['Instala ripgrep y añade rg al PATH para buscar en esta carpeta.','No se puede buscar en esta carpeta.','Se muestran las primeras 500 coincidencias. Acota la búsqueda.'],
+  ar:['ثبّت ripgrep وأضف rg إلى PATH للبحث في هذا المجلد.','تعذر البحث في هذا المجلد.','يتم عرض أول 500 نتيجة. حدّد بحثك أكثر.'],
+  'zh-Hans':['请安装 ripgrep 并将 rg 添加到 PATH，以搜索此目录。','无法搜索此目录。','显示前 500 个匹配项。请缩小搜索范围。'],
+  'zh-Hant':['請安裝 ripgrep 並將 rg 加入 PATH，以搜尋此目錄。','無法搜尋此目錄。','顯示前 500 個符合項目。請縮小搜尋範圍。'],
+  ko:['이 디렉터리를 검색하려면 ripgrep을 설치하고 rg를 PATH에 추가하세요.','이 디렉터리를 검색할 수 없습니다.','처음 500개 결과를 표시합니다. 검색 범위를 좁히세요.'],
+  ja:['このディレクトリを検索するには ripgrep をインストールし、rg を PATH に追加してください。','このディレクトリを検索できません。','最初の500件を表示しています。検索を絞り込んでください。']
+};
+for(const [locale,values] of Object.entries(searchLabels))for(const [index,key] of ['ripgrepMissing','searchError','searchLimited'].entries())messages[locale][key]=values[index];
 const documentLabels={
   en:['Open Markdown viewer','Preview','Text'],de:['Markdown-Ansicht öffnen','Vorschau','Quelltext'],fr:['Ouvrir la visionneuse Markdown','Aperçu','Texte'],es:['Abrir visor Markdown','Vista previa','Texto'],ar:['فتح عارض Markdown','معاينة','نص'],
   'zh-Hans':['打开 Markdown 查看器','预览','文本'],'zh-Hant':['開啟 Markdown 檢視器','預覽','文字'],ko:['Markdown 뷰어 열기','미리 보기','텍스트'],ja:['Markdown ビューアを開く','プレビュー','テキスト']

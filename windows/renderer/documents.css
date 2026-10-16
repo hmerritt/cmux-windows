@@ -33,3 +33,8 @@
 .document-find output { font:11px var(--font-mono,monospace); }
 ::highlight(cmux-document-find) { background:#b38c2255; color:inherit; }
 ::highlight(cmux-document-current) { background:#dba925; color:#111; }
+.workspace-search-input { width:100%; padding:8px; color:inherit; background:#ffffff08; border:1px solid #ffffff30; border-radius:4px; }
+.workspace-search-result { display:flex; flex-direction:column; width:100%; gap:4px; text-align:left; padding:8px; color:inherit; background:transparent; border:0; border-bottom:1px solid #ffffff12; }
+.workspace-search-result strong { overflow-wrap:anywhere; }
+.workspace-search-result span { width:100%; white-space:pre; overflow:hidden; text-overflow:ellipsis; font:11px/1.5 var(--font-mono,monospace); }
+.workspace-search-result:focus-visible { outline:1px solid #0a84ff; background:#0a84ff22; }

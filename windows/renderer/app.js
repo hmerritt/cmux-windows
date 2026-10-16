@@ -2,11 +2,13 @@ import "./chrome.js";
 import {parityText} from './parity-messages.mjs';
 import {containModalFocus} from './modal-focus.mjs';
 import {createWorkspaceFileExplorer} from './workspace-files.mjs';
+import {createWorkspaceSearch} from './workspace-search.mjs';
 import {createDocumentPanes} from './document-panes.mjs';
 import {createDiffPanes} from './diff-panes.mjs';
 const diffPanes=createDiffPanes();
 const documentPanes=createDocumentPanes({openMarkdown:(root,filePath)=>openMarkdownDocument(root,filePath)});
 const workspaceFileExplorer=createWorkspaceFileExplorer({openMarkdown:(root,filePath)=>openMarkdownDocument(root,filePath)});
+const workspaceSearch=createWorkspaceSearch();
 import {PaneTabGroups, replaceTreePanel} from "./pane-tab-groups.js";
 const paneTabGroups = new PaneTabGroups(localStorage);
 import {
@@ -16365,6 +16367,7 @@ function mergeSettingsInspectorRenderOptions(current = {}, next = {}) {
 }
 
 function renderInspector(options = {}) {
+  if(state.inspectorMode!=='search')workspaceSearch.invalidate();
   if(state.inspectorMode!=='files')workspaceFileExplorer.invalidate();
   if (!state.inspectorMode) {
     state.inspectorSignature = "";
@@ -16400,6 +16403,11 @@ function renderInspector(options = {}) {
       };
       return card;
     }));
+  } else if(state.inspectorMode==='search') {
+    state.inspectorSignature='search';
+    setTextIfChanged(elements.inspectorTitle,workspaceSearch.label);
+    setTextIfChanged(elements.inspectorSubtitle,activeWorkspace()?.cwd || '');
+    workspaceSearch.render(activeWorkspace()?.cwd || '',elements.inspectorBody);
   } else if(state.inspectorMode==='files') {
     state.inspectorSignature='files';
     setTextIfChanged(elements.inspectorTitle,workspaceFileExplorer.label);
@@ -43802,6 +43810,11 @@ function openWorkspaceFiles() {
   requestAnimationFrame(()=>workspaceFileExplorer.focus());
 }
 
+function openWorkspaceSearch() {
+  state.inspectorMode='search';updateRailButtons();render();
+  requestAnimationFrame(()=>workspaceSearch.focus());
+}
+
 async function openMarkdownDocument(root,filePath) {
   const workspace=activeWorkspace();if(!workspace)return;
   const existing=workspace.panels.find(panel=>panel.type==='markdown' && panel.cwd===root && panel.filePath===filePath);
@@ -46012,7 +46025,7 @@ window.cmuxNative?.getAccessibilitySupport?.().then(setScreenReaderSupport);
 window.cmuxNative?.onAccessibilitySupport?.(setScreenReaderSupport);
 
 const windowsShortcuts = installWindowsShortcuts({
-  state,elements,commands,paneTabGroups,focusedPanel,activePanel,activeWorkspace,transferPaneTabs,openWorkspaceFiles,workspaceFileExplorer,documentPanes,diffPanes,openDiffViewer,
+  state,elements,commands,paneTabGroups,focusedPanel,activePanel,activeWorkspace,transferPaneTabs,openWorkspaceFiles,openWorkspaceSearch,workspaceFileExplorer,documentPanes,diffPanes,openDiffViewer,
   updatePanel,updatePanels,
   isFormEditableTarget,isPanelMinimized,focusPanel,findPanelState,render,
   paneTreeForWorkspace,replacePaneTreePanelId,removePanelFromPaneTree,savePaneTreeLayouts,

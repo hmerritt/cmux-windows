@@ -9,6 +9,9 @@ const { formatMessage, t } = require("./i18n.cjs");
 const {ShortcutConfig} = require('./shortcut-config.cjs');
 const workspaceFiles=new (require('./workspace-files.cjs').WorkspaceFiles)();
 const workspaceGit=new (require('./workspace-git.cjs').WorkspaceGit)();
+const workspaceSearch=new (require('./workspace-search.cjs').WorkspaceSearch)();
+const workspaceSearchRequests=new Map();
+const workspaceSearchRenderers=new WeakSet();
 const {ShortcutRouter, catalog} = require('../renderer/shortcut-engine.mjs');
 const {actionAvailable, actionPriority} = require('../renderer/shortcut-scopes.mjs');
 const separateWindow = process.argv.find(value=>value.startsWith('--cmux-window-id='))?.split('=')[1];
@@ -718,6 +721,18 @@ if (!hasLock) {
   },null));
   ipcMain.handle('files:image',trustedIpcHandler(async(_event,root,relative)=>{
     try{return {ok:true,...await workspaceFiles.readImage(root,relative)};}catch(error){return {ok:false,error:error.message};}
+  },null));
+  ipcMain.handle('files:search',trustedIpcHandler(async(event,root,query)=>{
+    const id=event.sender.id;
+    if(!workspaceSearchRenderers.has(event.sender)) {
+      workspaceSearchRenderers.add(event.sender);
+      event.sender.once('destroyed',()=>{workspaceSearchRequests.get(id)?.abort();workspaceSearchRequests.delete(id);});
+    }
+    workspaceSearchRequests.get(id)?.abort();
+    const controller=new AbortController();workspaceSearchRequests.set(id,controller);
+    try{return {ok:true,...await workspaceSearch.search(root,query,{signal:controller.signal})};}
+    catch(error){return {ok:false,error:error.message};}
+    finally{if(workspaceSearchRequests.get(id)===controller)workspaceSearchRequests.delete(id);}
   },null));
   ipcMain.handle('git:status',trustedIpcHandler(async(_event,root)=>{
     try{return {ok:true,...await workspaceGit.status(root)};}catch(error){return {ok:false,error:error.message};}

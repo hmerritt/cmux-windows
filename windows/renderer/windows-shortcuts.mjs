@@ -215,6 +215,7 @@ export function installWindowsShortcuts(e) {
     resetWorkspaceTerminalFontSize:()=>e.activeWorkspace()?.panels.filter(p=>p.type==='terminal').forEach(p=>e.resetPaneTerminalFontSize(p.id,{toast:false})),
     focusRightSidebar:()=>{if(!state.inspectorMode)e.openWorkspaceFiles();else elements.inspector.querySelector('button,input')?.focus();},
     switchRightSidebarToFiles:e.openWorkspaceFiles,
+    findInDirectory:e.openWorkspaceSearch,
     fileExplorerOpenSelection:()=>e.workspaceFileExplorer.openSelection(),
     fileExplorerOpenSelectionFinderAlias:()=>e.workspaceFileExplorer.openSelection(),
     toggleFileExplorer:()=>{if(state.inspectorMode==='files')e.openInspector('files');else e.openWorkspaceFiles();},

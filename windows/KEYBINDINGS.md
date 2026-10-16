@@ -234,7 +234,7 @@ Windows UI translation completeness.
 | Markdown Viewer: Zoom Out (`markdownZoomOut`) | `ctrl+-` |  | Available |
 | Markdown Viewer: Actual Size (`markdownZoomReset`) | `ctrl+0` |  | Available |
 | Find… (`find`) | `ctrl+f` |  | Available |
-| Find in Directory… (`findInDirectory`) | `shift+ctrl+f` |  | Requires a feature not yet ported |
+| Find in Directory… (`findInDirectory`) | `shift+ctrl+f` |  | Available |
 | Find Next (`findNext`) | `ctrl+g` | `f3` | Available |
 | Find Previous (`findPrevious`) | `alt+ctrl+g` | `shift+f3` | Available |
 | Hide Find Bar (`hideFind`) | `alt+shift+ctrl+f` |  | Available |
