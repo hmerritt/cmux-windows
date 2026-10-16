@@ -26,6 +26,7 @@
     "test:shortcuts": "electron tests/shortcuts-desktop.cjs",
     "test:parity": "electron tests/parity-desktop.cjs",
     "test:documents": "electron tests/documents-desktop.cjs",
+    "test:search": "electron tests/search-desktop.cjs",
     "pretest": "npm run build:locales",
     "test": "node --test tests/*.test.cjs",
     "presmoke": "npm run build:locales",
