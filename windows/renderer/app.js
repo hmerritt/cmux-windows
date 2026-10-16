@@ -502,6 +502,7 @@ const layoutSettingsPreviewKeys = new Set([
   "statusbarStyle",
   "sidebarWidth",
   "inspectorWidth",
+  "rightSidebarWidth",
   "performanceMode"
 ]);
 const surfaceTabLayoutKeys = new Set([
@@ -602,6 +603,7 @@ const settingsInspectorSettingKeys = {
     "statusbarStyle",
     "sidebarWidth",
     "inspectorWidth",
+    "rightSidebarWidth",
     "performanceMode"
   ],
   performance: [
@@ -1631,6 +1633,7 @@ function normalizeSettings(input = {}, legacyFontSize = 0) {
   next.terminalCursorColor = normalizeTerminalColor(next.terminalCursorColor);
   next.sidebarWidth = clamp(next.sidebarWidth, 188, 304);
   next.inspectorWidth = clamp(next.inspectorWidth, inspectorWidthMin, inspectorWidthMax);
+  next.rightSidebarWidth = clamp(Number.isFinite(Number(next.rightSidebarWidth)) ? Number(next.rightSidebarWidth) : 295, 295, 1200);
   next.terminalScrollback = clamp(next.terminalScrollback, 2000, 50000);
   next.terminalPadding = clamp(next.terminalPadding, 0, 16);
   return next;
@@ -7160,6 +7163,7 @@ function settingsRenderSignature(settings = state.settings) {
     settings.workspaceColorStyle,
     settings.sidebarWidth,
     settings.inspectorWidth,
+    settings.rightSidebarWidth,
     settings.terminalRenderer,
     settings.terminalFontFamily,
     settings.terminalFontSize,
@@ -7199,6 +7203,7 @@ function applySettings() {
   setStylePropertyIfChanged(document.documentElement, "--surface-tint-active", surfaceTint.active);
   setStylePropertyIfChanged(elements.shell, "--sidebar-width", `${state.settings.sidebarWidth}px`);
   setStylePropertyIfChanged(elements.shell, "--inspector-width", `${state.settings.inspectorWidth}px`);
+  setStylePropertyIfChanged(elements.shell, "--tool-sidebar-preferred-width", `${state.settings.rightSidebarWidth}px`);
   setStylePropertyIfChanged(elements.shell, "--terminal-font-family", terminalFontStack());
   setStylePropertyIfChanged(elements.shell, "--terminal-padding", `${state.settings.terminalPadding}px`);
   const tabMetrics = tabSizeMetrics.get(state.settings.tabSize) || tabSizeMetrics.get(defaultSettings.tabSize);
@@ -10733,6 +10738,7 @@ function render(previousState, options = {}) {
 
   toggleClassIfChanged(elements.shell, "sidebar-collapsed", state.sidebarCollapsed);
   toggleClassIfChanged(elements.shell, "inspector-open", Boolean(state.inspectorMode));
+  toggleClassIfChanged(elements.shell, "tool-sidebar-open", ["files", "search"].includes(state.inspectorMode));
   toggleClassIfChanged(elements.shell, "pane-zoomed", Boolean(zoomedPanel));
   toggleClassIfChanged(elements.shell, "workspace-empty", panelCount === 0);
   applySettings();
@@ -13335,6 +13341,7 @@ function startInspectorResize(event) {
   elements.shell.classList.add("inspector-resizing");
   state.inspectorResizing = {
     pointerId: event.pointerId,
+    toolSidebar: ["files", "search"].includes(state.inspectorMode),
     startX: event.clientX,
     startWidth: rect.width,
     width: rect.width
@@ -13343,14 +13350,17 @@ function startInspectorResize(event) {
 
 function continueInspectorResize(event) {
   if (!state.inspectorResizing) return;
+  const toolSidebar = state.inspectorResizing.toolSidebar;
+  const availableWidth = window.innerWidth - elements.sidebar.getBoundingClientRect().width;
+  const maximumWidth = toolSidebar ? Math.max(295, Math.min(1200, availableWidth - 360)) : inspectorWidthMax;
   const nextWidth = Math.round(clamp(
     state.inspectorResizing.startWidth + state.inspectorResizing.startX - event.clientX,
-    inspectorWidthMin,
-    inspectorWidthMax
+    toolSidebar ? 295 : inspectorWidthMin,
+    maximumWidth
   ));
   state.inspectorResizing.width = nextWidth;
-  state.settings.inspectorWidth = nextWidth;
-  elements.shell.style.setProperty("--inspector-width", `${nextWidth}px`);
+  state.settings[toolSidebar ? "rightSidebarWidth" : "inspectorWidth"] = nextWidth;
+  elements.shell.style.setProperty(toolSidebar ? "--tool-sidebar-preferred-width" : "--inspector-width", `${nextWidth}px`);
 }
 
 function finishInspectorResize(event) {

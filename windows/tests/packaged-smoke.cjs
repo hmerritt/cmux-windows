@@ -167,6 +167,9 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
       await delay(100);
     }
     assert(searchReady,'Packaged directory-search shortcut must focus its input');
+    const sidebarGeometry=await evaluate(`(()=>{const dock=document.getElementById('inspector').getBoundingClientRect();return {width:dock.width,unobscured:[...document.querySelectorAll('.pane')].every(pane=>pane.getBoundingClientRect().right<=dock.left+1)}})()`);
+    assert.equal(sidebarGeometry.width,295,'Packaged right sidebar uses the native default width');
+    assert(sidebarGeometry.unobscured,'Packaged right sidebar must reserve space for live panes');
     await call('Input.insertText',{text:'Packaged change'});
     let matches=false;
     for(let i=0;i<100;i++) {

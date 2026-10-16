@@ -20,6 +20,7 @@ It does not execute Apple SwiftUI or the macOS GhosttyKit binary.
 | Accessibility | Named tabs and tab panels verified in Chromium's native accessibility tree; Home/End navigation, palette selection, trapped dialog focus, background isolation and live OS screen-reader support verified in the desktop. |
 | Workspace files | Keyboard directory navigation, UTF-8 previews and explicit file editing through trusted desktop IPC. Ctrl+S saves with revision checks, BOM/CRLF preservation, draft recovery and discard/reload. Tests reject traversal, outside-workspace junctions, binary content and files over 1 MB. |
 | File creation and rename | Toolbar/dialog actions create files and folders, then select/open the result. Renames preserve contents, handle case-only names and refuse existing destinations. Mutations share a serialized backend and canonical parent boundary; invalid Windows names are rejected. Drafts and open Markdown paths follow file/folder renames and survive reload. |
+| Right sidebar layout | Files and Find reserve pane space with the native 295px default/minimum, 1200px maximum and 360px content allowance. Pointer resizing persists across reloads; shrinking the window constrains the dock without losing the preferred width. Geometry tests cover three window sizes and left-sidebar collapse. |
 | Find in Directory | Ctrl+Shift+F and the canonical action open a sidebar content search. Ripgrep uses fixed strings, smart case, hidden files and native excluded directories. Results open the shared editor at the matching line/column. Searches cancel on replacement/closure and have process, output and result bounds. Requires `rg` on PATH; missing-tool copy is translated. |
 | File editor actions | Save and Word Wrap use the shared shortcut registry, including live rebinding/unbinding. Word wrap is persisted and reflows open editors. Desktop tests cover default/rebound keys and the canonical menu save action. |
 | Markdown panes | File-browser action opens a restored document pane with Preview/Text modes, live disk updates, shared editing, syntax highlighting, tables, local images, Mermaid diagrams, contextual zoom and find across formatted text. Shared upstream parser and sanitizer assets are shipped locally. |
@@ -46,6 +47,8 @@ npm run test:search
 npm run test:search -- --force-device-scale-factor=1.5
 npm run test:files
 npm run test:files -- --force-device-scale-factor=1.5
+npm run test:sidebar
+npm run test:sidebar -- --force-device-scale-factor=1.5
 npm run smoke
 npm run test:desktop
 npm audit
@@ -69,6 +72,9 @@ search, line navigation, shared editing and configurable Save/Word Wrap.
 File-mutation regression `1d4c5f814b` fails with `npm run test:files`;
 the same command passes with creation, rename, collision preservation,
 draft migration and open-document folder rename/restoration.
+Right-sidebar regression `3c23583302` fails with `npm run test:sidebar`;
+the same command passes with docked Files/Find, pointer resizing, constrained
+window geometry and saved width restoration.
 They do not replace or stop an already running user build.
 
 ## Remaining gaps
@@ -86,8 +92,8 @@ They do not replace or stop an already running user build.
 - **Settings and sidebar:** the upstream Windows settings UI remains; the macOS
   settings window is not recreated 1:1. The file editor supports existing UTF-8
   files up to 1 MB. File deletion/moves, complete explorer menus and the other
-  macOS right-sidebar tools remain. Narrow layouts alongside the inspector need
-  further visual validation. Markdown math/Vega and exhaustive rendering parity remain; Git diff
+  macOS right-sidebar tools remain. Paired macOS visual comparison of the dock
+  remains. Markdown math/Vega and exhaustive rendering parity remain; Git diff
   staging, review comments and the complete macOS diff presentation remain.
 - **Localization:** 198 unambiguous existing messages are reused from nine
   catalogs/locales, and this batch adds translated renderer/file-browser copy.

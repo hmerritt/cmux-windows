@@ -164,7 +164,7 @@ body { font-size: 13px; }
 .shell .pane-grid { background: #181916; }
 .shell .pane-splitter { flex-basis: 1px; background: #181916; }
 .shell.focus-mode .pane { grid-template-rows: minmax(0, 1fr); }
-.workspace-files-toolbar { display:flex; gap:6px; padding:8px 0; }
+.workspace-files-toolbar { display:flex; flex-wrap:wrap; gap:6px; padding:8px 0; }
 .workspace-files-toolbar button,.workspace-file-preview button { background:#ffffff0a; border:1px solid #ffffff20; color:inherit; border-radius:4px; padding:4px 8px; }
 .workspace-files-path { font:11px var(--font-ui); overflow-wrap:anywhere; color:#aaa; margin-bottom:8px; }
 .workspace-file-tree { display:flex; flex-direction:column; }
@@ -173,3 +173,23 @@ body { font-size: 13px; }
 .workspace-file-tree button:focus-visible { outline:1px solid #0a84ff; outline-offset:-1px; }
 .workspace-file-preview { display:grid; gap:8px; margin-top:12px; }
 .workspace-file-preview textarea { width:100%; min-height:300px; resize:vertical; background:#181916; color:#ddd; font:12px/1.5 var(--font-mono,monospace); border:1px solid #ffffff20; padding:8px; }
+
+/* Files and Find follow the native right-sidebar policy: 295px minimum,
+   1200px maximum and 360px reserved for terminal content where space permits.
+   Keep the preferred width when the window temporarily constrains the dock. */
+.shell.tool-sidebar-open {
+  --tool-left-width: var(--sidebar-width, 240px);
+  --tool-sidebar-width: clamp(295px, var(--tool-sidebar-preferred-width, 295px), max(295px, min(1200px, calc(100vw - var(--tool-left-width) - 360px))));
+  grid-template-columns: var(--tool-left-width) minmax(0, 1fr) var(--tool-sidebar-width);
+}
+.shell.tool-sidebar-open.sidebar-collapsed,
+.shell.tool-sidebar-open.focus-mode { --tool-left-width: 0px; }
+.shell.tool-sidebar-open .inspector {
+  position: relative;
+  inset: auto;
+  width: auto;
+  max-width: none;
+  z-index: 1;
+  box-shadow: none;
+}
+.shell.tool-sidebar-open .inspector-body { padding: 12px; }

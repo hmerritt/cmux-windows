@@ -107,6 +107,7 @@ npm run test:parity
 npm run test:documents
 npm run test:search
 npm run test:files
+npm run test:sidebar
 npm run smoke
 npm run test:desktop
 npm run pack:win
