@@ -7,3 +7,4 @@ renderer/vendor-documents/
 test-output/
 renderer/catalog-messages.js
 src/catalog-messages.json
+release-parity-tabs/

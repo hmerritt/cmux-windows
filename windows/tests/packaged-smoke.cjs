@@ -132,6 +132,29 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
       await delay(100);
     }
     assert(split,'Packaged Ctrl+D must create a split through the shipped shortcut module');
+    async function pointerClick(point,count=1){
+      await call('Input.dispatchMouseEvent',{type:'mouseMoved',...point});
+      for(let clickCount=1;clickCount<=count;clickCount++)for(const type of ['mousePressed','mouseReleased'])await call('Input.dispatchMouseEvent',{type,...point,button:'left',clickCount});
+      await delay(200);
+    }
+    async function tabWait(expression){for(let i=0;i<100;i++){if(await evaluate(expression))return;await delay(100);}throw Error('Packaged tabs: '+expression);}
+    const tabCount=await evaluate("document.querySelectorAll('.pane-tab').length");
+    const emptyBar=await evaluate("(()=>{const r=document.querySelector('.pane.is-active .pane-tab-strip').getBoundingClientRect();return {x:r.right-10,y:r.top+r.height/2}})()");
+    await pointerClick(emptyBar);assert.equal(await evaluate("document.querySelectorAll('.pane-tab').length"),tabCount);
+    await pointerClick(emptyBar,2);await tabWait(`document.querySelectorAll('.pane-tab').length===${tabCount+1}`);
+    const renameLabel=await evaluate("(()=>{const r=document.querySelector('.pane.is-active .pane-tab.is-selected .pane-tab-label').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()");
+    await pointerClick(renameLabel,2);await tabWait("!!document.querySelector('.inline-rename-input')");
+    await call('Input.insertText',{text:'Packaged inline tab'});
+    await call('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+    await call('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+    await tabWait("document.querySelector('.pane.is-active .pane-tab.is-selected .pane-tab-label').textContent==='Packaged inline tab' && !document.querySelector('.inline-rename-input')");
+    assert(await evaluate("getComputedStyle(document.querySelector('.pane-tab')).flexBasis==='160px' && getComputedStyle(document.querySelector('.pane.is-active .pane-tab.is-selected')).boxShadow.includes('2px')"));
+    const workspaceCount=await evaluate("document.querySelectorAll('.workspace-row').length");
+    const emptyList=await evaluate("(()=>{const r=document.getElementById('workspaceList').getBoundingClientRect();return {x:r.right-20,y:r.bottom-20}})()");
+    await pointerClick(emptyList);assert.equal(await evaluate("document.querySelectorAll('.workspace-row').length"),workspaceCount);
+    await pointerClick(emptyList,2);await tabWait(`document.querySelectorAll('.workspace-row').length===${workspaceCount+1}`);
+    assert.equal(await evaluate("document.querySelectorAll('.pane-tab').length"),1);
+    console.log('PASS packaged tab interactions: real pointer creation, inline rename, 160px width and active 2px indicator');
     const documentRoot=path.join(profile,'documents');
     fs.mkdirSync(documentRoot);
     fs.writeFileSync(path.join(documentRoot,'notes.md'),'# Packaged document\n\n![Local](local.png)\n\n```mermaid\nflowchart LR\nA --> B\n```\n');
@@ -182,6 +205,8 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     await evaluate("{const source=document.querySelector('[data-diff-source]');source.value='branch';source.dispatchEvent(new Event('change',{bubbles:true}));}");
     for(let i=0;i<100;i++){if(await evaluate("document.querySelector('[data-diff-compare]').disabled===false && document.querySelector('[data-diff-base]').hidden===false"))break;await delay(100);}
     await evaluate("document.querySelector('[data-diff-base]').value='packaged-base';document.querySelector('[data-diff-compare]').click()");
+    await tabWait("document.querySelector('.diff-base-status').textContent.includes('packaged-base') && !!document.querySelector('[data-git-path=\"branch.txt\"]')");
+    await evaluate("document.querySelector('[data-git-path=\"branch.txt\"]').click()");
     let branchReady=false;
     for(let i=0;i<100;i++) {
       branchReady=await evaluate("document.querySelector('.diff-base-status').textContent.includes('packaged-base') && !!document.querySelector('[data-git-path=\"branch.txt\"]') && document.querySelector('.diff-patch').textContent.includes('packaged branch content')");

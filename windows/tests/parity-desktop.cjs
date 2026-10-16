@@ -128,13 +128,12 @@ app.once('browser-window-created',(_event,win)=>{
       app.setAccessibilitySupportEnabled(false);
       await evaluate("document.querySelector('.xterm-helper-textarea').focus()");
       await key('r',['control']);
-      await waitFor("document.querySelector('.app-dialog input') !== null");
-      await waitFor("document.activeElement.matches('.app-dialog input')");
-      assert(await evaluate("document.querySelector('.app-dialog').getAttribute('aria-labelledby') !== null"));
-      await key('Tab',['shift']);
-      assert(await evaluate("document.activeElement.classList.contains('dialog-confirm')"),'Shift+Tab wraps within the dialog');
+      await waitFor("document.querySelector('.inline-rename-input') !== null");
+      await waitFor("document.activeElement.matches('.inline-rename-input')");
+      assert(await evaluate("!!document.querySelector('.inline-rename-input').getAttribute('aria-label')"));
+      assert(await evaluate("!document.getElementById('shell').inert"),'Inline rename leaves the workspace interactive');
       await key('Escape');
-      assert(await evaluate("!document.getElementById('shell').inert"),'Closing dialog restores background interaction');
+      assert(await evaluate("!document.querySelector('.inline-rename-input')"),'Escape closes inline rename');
       await delay(300);
       fs.mkdirSync(path.join(__dirname,'../test-output'),{recursive:true});
       fs.writeFileSync(path.join(__dirname,'../test-output/parity.png'),(await win.webContents.capturePage()).toPNG());

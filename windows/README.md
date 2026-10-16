@@ -106,6 +106,7 @@ npm run build:renderer
 npm test
 npm run test:shortcuts
 npm run test:parity
+npm run test:tabs
 npm run test:documents
 npm run test:search
 npm run test:files

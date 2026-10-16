@@ -1,4 +1,6 @@
 import "./chrome.js";
+import {createInlineRename} from './inline-rename.mjs';
+const inlineRename=createInlineRename({errorText:()=>parityText('renameSaveError')});
 import {parityText} from './parity-messages.mjs';
 import {containModalFocus} from './modal-focus.mjs';
 import {createWorkspaceFileExplorer} from './workspace-files.mjs';
@@ -13424,14 +13426,17 @@ function createPane(panel) {
     focusPanel(pane.dataset.panelId);
   });
   header.addEventListener("dblclick", (event) => {
-    if (event.target.closest(".pane-toolbar, .pane-tool")) return;
+    if (event.target.closest(".pane-toolbar, .pane-tool, button")) return;
+    const strip = event.target.closest(".pane-tab-strip");
+    if (strip && event.clientY >= strip.getBoundingClientRect().top + strip.clientHeight) return;
     event.preventDefault();
     event.stopPropagation();
-    const found = findPanelState(pane.dataset.panelId);
-    if (found && !isPendingPanel(found.panel)) renamePanel(found.panel);
+    const tab=event.target.closest('.pane-tab');
+    if(tab){const found=findPanelState(tab.dataset.tabPanelId);if(found && !isPendingPanel(found.panel))renamePanel(found.panel);}
+    else createTerminalTab(pane.dataset.panelId);
   });
   header.addEventListener("contextmenu", (event) => {
-    const found = findPanelState(pane.dataset.panelId);
+    const found = findPanelState(event.target.closest('.pane-tab')?.dataset.tabPanelId || pane.dataset.panelId);
     if (found) showPanelContextMenu(event, found.panel);
   });
   header.addEventListener("pointerdown", (event) => startPanePointerDrag(event, pane));
@@ -14272,7 +14277,7 @@ function requestInitialTerminalLayout(session, panelId, frame = 0) {
       return;
     }
     scheduleFitTerminal(session, true);
-    if (panelId === activeWorkspace()?.activePanelId) session.term.focus();
+    if (!inlineRename.isEditing() && panelId === activeWorkspace()?.activePanelId) session.term.focus();
   });
 }
 
@@ -39348,28 +39353,14 @@ function showConfirmDialog({
 }
 
 async function renamePanel(panel) {
-  if (!panel) {
-    toast("Focus or create a pane first.");
-    return false;
-  }
-  const title = await showTextDialog({
-    title: "Rename tab",
-    value: panel.title || (panel.type === "browser" ? hostnameOf(panel.url) : "Terminal"),
-    placeholder: "Tab name",
-    confirmLabel: "Rename"
+  if(!panel)return false;
+  await focusPanel(panel.id);
+  await new Promise(requestAnimationFrame);
+  return inlineRename.open({key:`panel:${panel.id}`,value:panelDisplayTitle(panel,false),label:parityText('renameTabInline'),
+    findLabel:()=>document.querySelector(`[data-tab-panel-id="${CSS.escape(panel.id)}"] .pane-tab-label`),
+    exists:()=>Boolean(findPanelState(panel.id)),
+    save:async title=>{const result=await api(`/api/panels/${panel.id}`,{method:'PATCH',body:JSON.stringify({title})});if(!result?.ok)throw Error('rename_failed');await loadState();}
   });
-  if (title === null) return false;
-  if (!title) {
-    if (!panel.titleLocked) {
-      toast("Pane already uses the default name.");
-      return false;
-    }
-    await updatePanel(panel.id, { title: "" });
-    toast("Pane name reset.");
-    return true;
-  }
-  await updatePanel(panel.id, { title });
-  return true;
 }
 
 function renameActivePanel(panel = focusedPanel() || activePanel()) {
@@ -41888,15 +41879,12 @@ async function renameActiveWorkspace() {
   await renameWorkspaceById(workspace.id, workspace.title);
 }
 
-async function renameWorkspaceById(workspaceId, currentTitle = "") {
-  const title = await showTextDialog({
-    title: "Rename workspace",
-    value: currentTitle,
-    placeholder: "Workspace name",
-    confirmLabel: "Rename"
+async function renameWorkspaceById(workspaceId,currentTitle='') {
+  return inlineRename.open({key:`workspace:${workspaceId}`,value:currentTitle,label:parityText('renameWorkspaceInline'),
+    findLabel:()=>document.querySelector(`.workspace-row[data-workspace-id="${CSS.escape(workspaceId)}"] .workspace-name`),
+    exists:()=>Boolean(state.data?.workspaces.some(workspace=>workspace.id===workspaceId)),
+    save:async title=>{const result=await api(`/api/workspaces/${workspaceId}`,{method:'PATCH',body:JSON.stringify({title})});if(!result?.ok)throw Error('rename_failed');await loadState();}
   });
-  if (!title) return;
-  await renameWorkspaceTo(title, workspaceId);
 }
 
 async function renameWorkspaceTo(title, workspaceId = activeWorkspace()?.id) {
@@ -43594,11 +43582,12 @@ function focusWorkspaceByOrdinal(ordinal) {
 }
 
 function focusTerminalSession(panelId, options = {}) {
+  if(inlineRename.isEditing())return;
   if(findPanelState(panelId)?.panel.type==='markdown') {
-    requestAnimationFrame(()=>documentPanes.focus(panelId));return;
+    requestAnimationFrame(()=>{if(!inlineRename.isEditing())documentPanes.focus(panelId);});return;
   }
   if(findPanelState(panelId)?.panel.type==='diff') {
-    requestAnimationFrame(()=>diffPanes.focus(panelId));return;
+    requestAnimationFrame(()=>{if(!inlineRename.isEditing())diffPanes.focus(panelId);});return;
   }
   if (!state.terminals.has(panelId)) {
     const requested = options.deferInitUntilPaint
@@ -43624,7 +43613,7 @@ function focusTerminalSession(panelId, options = {}) {
     ) {
       return;
     }
-    terminal.term.focus();
+    if (!inlineRename.isEditing()) terminal.term.focus();
   });
 }
 
@@ -45981,6 +45970,12 @@ elements.topbar?.addEventListener("dblclick", handleTopbarDoubleClick);
 elements.paneGrid.addEventListener("dragover", handlePaneGridDragOver);
 elements.paneGrid.addEventListener("dragleave", handlePaneGridDragLeave);
 elements.paneGrid.addEventListener("drop", handlePaneGridDrop);
+elements.workspaceList.addEventListener('dblclick',event=>{
+  if(event.target!==elements.workspaceList || state.dragPaneTab || state.dragWorkspaceId || state.sidebarResizing)return;
+  const rect=elements.workspaceList.getBoundingClientRect();
+  if(event.clientX>=rect.right-Math.max(8,elements.workspaceList.offsetWidth-elements.workspaceList.clientWidth) || event.clientY>=rect.top+elements.workspaceList.clientHeight)return;
+  event.preventDefault();event.stopPropagation();void createWorkspace();
+});
 elements.workspaceList.addEventListener("dragover", handleWorkspaceListDragOver);
 elements.workspaceList.addEventListener("dragleave", handleWorkspaceListDragLeave);
 elements.workspaceList.addEventListener("drop", handleWorkspaceListDrop);

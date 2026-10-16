@@ -141,3 +141,16 @@ const chartLabels={
   ja:['このグラフは外部リソースを使用しています。埋め込みデータを使用してください。','このグラフはプレビューの制限を超えています。ソースを下に表示します。','このグラフを描画できません。ソースを下に表示します。']
 };
 for(const [locale,values] of Object.entries(chartLabels))for(const [index,key] of ['chartExternalError','chartLimit','chartRenderError'].entries())messages[locale][key]=values[index];
+
+const inlineRenameLabels={
+  en:['Rename tab','Rename workspace','Unable to save this name. Try again.'],
+  de:['Tab umbenennen','Arbeitsbereich umbenennen','Dieser Name konnte nicht gespeichert werden. Versuchen Sie es erneut.'],
+  fr:['Renommer l’onglet','Renommer l’espace de travail','Impossible d’enregistrer ce nom. Réessayez.'],
+  es:['Cambiar nombre de la pestaña','Cambiar nombre del espacio de trabajo','No se puede guardar este nombre. Inténtalo de nuevo.'],
+  ar:['إعادة تسمية علامة التبويب','إعادة تسمية مساحة العمل','تعذر حفظ هذا الاسم. حاول مرة أخرى.'],
+  'zh-Hans':['重命名标签页','重命名工作区','无法保存此名称。请重试。'],
+  'zh-Hant':['重新命名分頁','重新命名工作區','無法儲存此名稱。請再試一次。'],
+  ko:['탭 이름 바꾸기','작업 공간 이름 바꾸기','이 이름을 저장할 수 없습니다. 다시 시도하세요.'],
+  ja:['タブ名を変更','ワークスペース名を変更','この名前を保存できません。もう一度お試しください。']
+};
+for(const [locale,values] of Object.entries(inlineRenameLabels))for(const [index,key] of ['renameTabInline','renameWorkspaceInline','renameSaveError'].entries())messages[locale][key]=values[index];

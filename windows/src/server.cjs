@@ -1220,8 +1220,8 @@ class CmuxWindowsRuntime {
     if (!workspace) return false;
     if (Object.hasOwn(updates, "title")) {
       const trimmed = String(updates.title || "").trim();
-      if (!trimmed) return false;
-      workspace.title = trimmed.slice(0, 80);
+      const used=new Set(this.state.workspaces.filter(item=>item.id!==workspaceId).map(item=>normalizedTitleKey(item.title)));
+      workspace.title = trimmed?trimmed.slice(0,80):generatedWorkspaceTitleFromUsed(path.basename(workspace.cwd || '') || 'Workspace',used);
     }
     if (Object.hasOwn(updates, "color")) {
       const color = String(updates.color || "").trim();

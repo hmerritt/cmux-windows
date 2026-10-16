@@ -12,6 +12,8 @@ It does not execute Apple SwiftUI or the macOS GhosttyKit binary.
 | Default appearance | Charcoal sidebar, Monokai terminal, blue workspace selection, compact controls, thin split separators and blue attention treatment compared visually against repository screenshots. |
 | Terminal | Real PowerShell and Unicode input/output through ConPTY. Optional WebGL rendering; SIXEL and iTerm inline images verified by reading rendered pixels after real shell output. DOM remains the default. |
 | Per-split tabs | Create, switch, close, reorder, move a tab, Shift-drag a group and detach into an edge split. Workspace-row drops move tabs or whole groups between workspaces in one runtime operation. Model and desktop HTML5 drag tests verify membership and restored layout; runtime tests verify process identity and rejected batches. Physical pointer dragging still needs manual validation. |
+| Tab interactions | Pointer double-click on empty pane-tab or workspace-list space creates exactly one item; single clicks and existing rows/controls retain their actions. Inline inputs cover the exact label bounds, preserve drafts across background rerenders and share pointer, keyboard and context-menu entrypoints. Enter, outside clicks and window blur save once; Escape cancels; blank names restore defaults. Failed saves retain drafts with translated inline errors. Full desktop restart restores custom panel names and reset workspace names. |
+| Tab presentation | Horizontal tabs prefer 160px and retain shrinking/overflow. Only the selected tab in the active pane gets a 2px blue top indicator; inactive selection remains gray. Sidebar hover/resize stays neutral while its divider, hit area and pointer resize work. Pointer, geometry, focus and resizing tests pass at 100% and 150%. |
 | Nested splits | Right and down splits, all panes visible at 640×480, 1280×800 and 1920×1080; terminal canvas fills the window. |
 | Browser | Local fixture page loaded in a real guest, with sandbox enabled and Node integration disabled. |
 | Notifications | Runtime notification reaches workspace summary, attention ring and bell count; notification panel opens. |
@@ -43,6 +45,8 @@ Run from `windows/` after `npm ci` and `npm run build:renderer`:
 ```powershell
 npm test
 npm run test:shortcuts
+npm run test:tabs
+npm run test:tabs -- --force-device-scale-factor=1.5
 npm run test:parity
 npm run test:parity -- --force-device-scale-factor=1.5
 npm run test:documents
@@ -56,10 +60,18 @@ npm run test:sidebar -- --force-device-scale-factor=1.5
 npm run smoke
 npm run test:desktop
 npm audit
-npm run dist:win -- --config.directories.output=release-parity
-$env:CMUX_TEST_BINARY = "$PWD/release-parity/win-unpacked/cmux.exe"
+npm run dist:win -- --config.directories.output=release-parity-tabs --config.electronDist=node_modules/electron/dist
+$env:CMUX_TEST_BINARY = "$PWD/release-parity-tabs/win-unpacked/cmux.exe"
 npm run test:packaged
 ```
+
+Tab-interaction regression `1ad64044d9` fails with
+`npx electron tests/tab-interactions-desktop.cjs` because empty-bar double-clicks
+do not create a tab. The same command passes with inline rename and corrected
+focus styling. `npm run test:tabs` additionally restarts the full desktop and
+checks restored names; both display scales pass. A runtime recreation test
+covers directory-based blank resets, collision numbering and unlocked terminal
+titles. The scoped unit/model suite now has 36 passing tests.
 
 Markdown chart regression `e3af2f7fcc` fails with `npm run test:documents`
 because all three supported fence forms remain code. The same command passes
