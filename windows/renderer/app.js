@@ -46140,6 +46140,11 @@ installBackgroundDropTarget(elements.paneGrid, {
   panelFromEvent: terminalPanelFromBackgroundDropEvent
 });
 applySettings();
+window.cmuxNative?.onBeforeClose?.(async () => {
+  if (state.focusSyncTimer) clearTimeout(state.focusSyncTimer);
+  await flushFocusSync();
+  await api('/api/session/save', { method: 'POST' });
+});
 loadState();
 loadBrowserProfiles();
 connectEvents();

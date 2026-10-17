@@ -26,11 +26,11 @@ app.once('browser-window-created',(_event,win)=>win.webContents.once('did-finish
       await waitFor(`document.activeElement.closest('.pane')?.dataset.panelId===${JSON.stringify(expected.focusId)}`);
       for(const [id,cwd] of Object.entries(expected.directories)){
         assert.equal(state.workspaces.flatMap(w=>w.panels).find(p=>p.id===id).cwd,cwd,'Saved directory restores for '+id);
-        await api('/api/input',{panelId:id,text:`[IO.File]::WriteAllText('${path.join(profile,id+'.txt').replaceAll("'","''")}', $PWD.Path)\r`.replace('\\r','\r')});
+        await api('/api/input',{panelId:id,text:id===expected.cmdId?`chcp 65001 > nul\rcd > "${path.join(profile,id+'.txt')}"\r`:`[IO.File]::WriteAllText('${path.join(profile,id+'.txt').replaceAll("'","''")}', $PWD.Path)\r`});
       }
       for(const [id,cwd] of Object.entries(expected.directories)){
         const file=path.join(profile,id+'.txt');for(let n=0;n<100 && !fs.existsSync(file);n++)await delay(75);
-        assert.equal(fs.readFileSync(file,'utf8'),cwd,'Restarted shell actually starts in its saved directory');
+        assert.equal(fs.readFileSync(file,'utf8').trimEnd(),cwd,'Restarted shell actually starts in its saved directory');
       }
       console.log('PASS full app restart: per-tab shell directories, active workspace, focused split and selected tab');return;
     }
@@ -39,23 +39,23 @@ app.once('browser-window-created',(_event,win)=>win.webContents.once('did-finish
     win.webContents.send('cmux-command','terminal.new');
     await waitFor("document.querySelectorAll('.pane-tab').length===2");
     const second=await evaluate("document.querySelector('.pane-tab.is-selected').dataset.tabPanelId");
-    const third=(await api('/api/panels',{workspaceId,type:'terminal',direction:'right'})).id;
+    const third=(await api('/api/panels',{workspaceId,type:'terminal',direction:'right',shellProfile:'cmd'})).id;
     const directories={};
     for(const [n,id] of [first,second,third].entries()){
-      const cwd=path.join(profile,'directory '+n+' Ω');fs.mkdirSync(cwd);directories[id]=cwd;
-      await api('/api/input',{panelId:id,text:`Set-Location -LiteralPath '${cwd.replaceAll("'","''")}'; [Console]::WriteLine('DIRECTORY_READY_${n}')\r`.replace('\\r','\r')});
+      const cwd=path.join(profile,'directory '+n+' # 50% Ω');fs.mkdirSync(cwd);directories[id]=cwd;
+      await api('/api/input',{panelId:id,text:id===third?`cd /d "${cwd}"\r`:`Set-Location -LiteralPath '${cwd.replaceAll("'","''")}'; [Console]::WriteLine('DIRECTORY_READY_${n}')\r`});
     }
-    await delay(2000);
+    for(let n=0;n<120;n++){const current=await api('/api/state',undefined,'GET');if(Object.entries(directories).every(([id,cwd])=>current.workspaces.flatMap(w=>w.panels).find(p=>p.id===id)?.cwd===cwd))break;await delay(75);}
     const updated=await api('/api/state',undefined,'GET');
     for(const [id,cwd] of Object.entries(directories))assert.equal(updated.workspaces.flatMap(w=>w.panels).find(p=>p.id===id).cwd,cwd,'cd updates saved tab directory');
-    const other=await api('/api/workspaces',{title:'Other workspace'});
+    await api('/api/workspaces',{title:'Other workspace'});
     await api('/api/panels/'+first+'/focus',{});
     await waitFor(`!!document.querySelector('[data-tab-panel-id="${second}"]')`);
     const point=await evaluate(`(()=>{const r=document.querySelector('[data-tab-panel-id="${second}"]').getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`);
     win.webContents.sendInputEvent({type:'mouseMove',...point});
     for(const type of ['mouseDown','mouseUp'])win.webContents.sendInputEvent({type,...point,button:'left',clickCount:1});
     await waitFor(`document.querySelector('.pane.is-active')?.dataset.panelId===${JSON.stringify(second)}`);
-    fs.writeFileSync(expectedFile,JSON.stringify({workspaceId,focusId:second,directories}));
+    fs.writeFileSync(expectedFile,JSON.stringify({workspaceId,focusId:second,cmdId:third,directories}));
     console.log('PASS session setup: independent cd changes for hidden tabs and split panes; close immediately after pointer focus');
   }catch(error){failed=true;console.error(error.stack||error);}
   finally{clearTimeout(deadline);win.close();}

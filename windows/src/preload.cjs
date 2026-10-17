@@ -2,6 +2,12 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("cmuxNative", {
   electron: true,
+  onBeforeClose(callback) {
+    ipcRenderer.on('session:flush', async () => {
+      try { await callback(); }
+      finally { ipcRenderer.send('session:flushed'); }
+    });
+  },
   platform: process.platform,
   getAccessibilitySupport:()=>ipcRenderer.invoke('accessibility:get'),
   listWorkspaceFiles:(root,relative='')=>ipcRenderer.invoke('files:list',root,relative),

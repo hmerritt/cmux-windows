@@ -8,6 +8,7 @@ const { fileURLToPath } = require("node:url");
 const { spawn, spawnSync } = require("node:child_process");
 const { WebSocket, WebSocketServer } = require("ws");
 const { t } = require("./i18n.cjs");
+const {TerminalDirectoryReports, directoryReportingShellArgs} = require("./terminal-directory.cjs");
 
 let pty = null;
 try {
@@ -488,12 +489,6 @@ function cleanTerminalTitle(rawTitle) {
   return title.slice(0, 80);
 }
 
-function shellArgs(shellPath) {
-  const base = path.basename(shellPath).toLowerCase();
-  if (base === "pwsh.exe" || base === "powershell.exe") return ["-NoLogo"];
-  return [];
-}
-
 function tokensMatch(expected, actual) {
   const left = Buffer.from(String(expected || ""));
   const right = Buffer.from(String(actual || ""));
@@ -600,6 +595,7 @@ class TerminalProcess {
     this.closed = false;
     this.ptyProcess = null;
     this.child = null;
+    this.directoryReports = new TerminalDirectoryReports();
     this.panelToken = crypto.randomBytes(32).toString("hex");
     this.start();
   }
@@ -610,7 +606,7 @@ class TerminalProcess {
       ? this.panel.cwd
       : os.homedir();
     if (pty) {
-      this.ptyProcess = pty.spawn(shellPath, shellArgs(shellPath), {
+      this.ptyProcess = pty.spawn(shellPath, directoryReportingShellArgs(shellPath), {
         name: "xterm-256color",
         cols: this.cols,
         rows: this.rows,
@@ -629,7 +625,7 @@ class TerminalProcess {
       return;
     }
 
-    this.child = spawn(shellPath, shellArgs(shellPath), {
+    this.child = spawn(shellPath, directoryReportingShellArgs(shellPath), {
       cwd,
       env: terminalProcessEnv(this.panel, this.panelToken),
       stdio: "pipe",
@@ -667,6 +663,15 @@ class TerminalProcess {
   }
 
   emitOutput(data) {
+    for (const reported of this.directoryReports.read(data)) {
+      const cwd = sanitizeDirectoryPath(reported, "");
+      if (cwd && cwd !== this.panel.cwd) {
+        this.panel.cwd = cwd;
+        const workspace = this.panel.runtime.findPanel(this.panel.id)?.workspace;
+        if (workspace?.activePanelId === this.panel.id) workspace.cwd = cwd;
+        this.panel.runtime.scheduleTerminalMetadataBroadcast();
+      }
+    }
     this.backlog = (this.backlog + data).slice(-200000);
     const titleMatch = data.match(/\x1b\]0;([^\x07\x1b]+)\x07/);
     if (titleMatch?.[1] && !this.panel.titleLocked) {
@@ -1371,6 +1376,11 @@ class CmuxWindowsRuntime {
         writeJSON(response, 200, this.serializeWorkspace(this.createWorkspaceFromOptions(body, { prewarmResponse: response })));
         return;
       }
+      if (request.method === "POST" && url.pathname === "/api/session/save") {
+        this.persistSession();
+        writeJSON(response, 200, { ok: true });
+        return;
+      }
       if (request.method === "POST" && url.pathname === "/api/session/reset") {
         writeJSON(response, 200, this.resetSession());
         return;
@@ -1828,6 +1838,7 @@ class CmuxWindowsRuntime {
       if (pending.handleType === "response") pending.response?.removeListener?.("finish", pending.handle);
     }
     this.pendingTerminalPrewarms.clear();
+    this.persistSession();
     for (const terminal of this.terminals.values()) terminal.close();
     this.terminals.clear();
     for (const socket of this.eventSockets) socket.close();

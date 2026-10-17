@@ -652,6 +652,25 @@ async function createWindow() {
     }
   });
 
+  let sessionFlushed = false;
+  let sessionFlushTimer;
+  mainWindow.on('close', event => {
+    if (sessionFlushed || mainWindow.webContents.isDestroyed()) return;
+    event.preventDefault();
+    if (sessionFlushTimer) return;
+    const finish = () => {
+      clearTimeout(sessionFlushTimer);
+      ipcMain.removeListener('session:flushed', flushListener);
+      sessionFlushed = true;
+      mainWindow?.close();
+    };
+    sessionFlushTimer = setTimeout(finish, 2000);
+    const flushListener = reply => {
+      if (isTrustedIpcEvent(reply)) finish();
+    };
+    ipcMain.on('session:flushed', flushListener);
+    mainWindow.webContents.send('session:flush');
+  });
   mainWindow.once("ready-to-show", () => mainWindow.show());
   mainWindow.webContents.on("console-message", details => {
     log(`renderer console level=${details.level} ${details.sourceId}:${details.lineNumber} ${details.message}`);
@@ -851,5 +870,5 @@ if (!hasLock) {
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
   });
-  app.on("before-quit", () => { shortcutConfig.close(); stopRuntime(); });
+  app.on("will-quit", () => { shortcutConfig.close(); stopRuntime(); });
 }
