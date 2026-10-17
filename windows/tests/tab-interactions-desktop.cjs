@@ -24,6 +24,14 @@ app.once('browser-window-created',(_event,win)=>win.webContents.once('did-finish
       for(const workspace of expected.workspaces){const saved=restored.workspaces.find(item=>item.id===workspace.id);assert.equal(saved.title,workspace.title);for(const panel of workspace.panels.filter(panel=>panel.titleLocked))assert.equal(saved.panels.find(item=>item.id===panel.id).title,panel.title);}
       console.log('PASS full desktop restart: custom panel and workspace reset names restored');return;
     }
+    const plusBounds=await evaluate("(()=>{const r=document.querySelector('.pane-new-tab').getBoundingClientRect();return {x:Math.floor(r.x),y:Math.floor(r.y),width:Math.ceil(r.width),height:Math.ceil(r.height)}})()");
+    const plusImage=await win.webContents.capturePage(plusBounds),plusSize=plusImage.getSize(),plusPixels=plusImage.toBitmap();
+    let minX=plusSize.width,minY=plusSize.height,maxX=-1,maxY=-1;
+    for(let y=0;y<plusSize.height;y++)for(let x=0;x<plusSize.width;x++){const i=(y*plusSize.width+x)*4;if(Math.min(plusPixels[i],plusPixels[i+1],plusPixels[i+2])>100){minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y);}}
+    assert(maxX>=minX,'New-tab plus must be visible');
+    assert(Math.abs((minX+maxX+1)/2-plusSize.width/2)<=1,'Toolbar plus ink must be centered horizontally');
+    assert(Math.abs((minY+maxY+1)/2-plusSize.height/2)<=1,'Toolbar plus ink must be centered vertically');
+    console.log('PASS toolbar plus: rendered icon is centered in its button');
     const initial=await evaluate("document.querySelectorAll('.pane-tab').length");
     const empty=await evaluate("(()=>{const r=document.querySelector('.pane-tab-strip').getBoundingClientRect();return {x:Math.round(r.right-10),y:Math.round(r.top+r.height/2)};})()");
     await clickAt(empty.x,empty.y);assert.equal(await evaluate("document.querySelectorAll('.pane-tab').length"),initial,'Single background clicks must not create tabs');
