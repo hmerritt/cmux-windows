@@ -14155,6 +14155,11 @@ function ensureTerminal(panel, body) {
   host.className = "terminal-host is-connecting";
   host.dataset.connectionStatus = t("terminal.connectingShell");
   host.addEventListener("wheel", handleTerminalWheelZoom, { passive: false, capture: true });
+  host.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void pasteClipboardToTerminal(panel);
+  }, { capture: true });
   body.appendChild(host);
 
   const fontSize = terminalFontSizeForPanel(panel);

@@ -11,6 +11,7 @@ It does not execute Apple SwiftUI or the macOS GhosttyKit binary.
 | Window and pane chrome | Live dimensions match the current Swift constants: 28-point titlebar and pane bars, 240-point default sidebar. Tests read the Swift source so subsequent source changes expose drift. |
 | Default appearance | Charcoal sidebar, Monokai terminal, blue workspace selection, compact controls, thin split separators and blue attention treatment compared visually against repository screenshots. |
 | Terminal | Real PowerShell and Unicode input/output through ConPTY. Optional WebGL rendering; SIXEL and iTerm inline images verified by reading rendered pixels after real shell output. DOM remains the default. |
+| Terminal right-click | Right-click in terminal content uses the shared clipboard paste action and targets/focuses the clicked pane, including inactive splits. Pointer tests cover Unicode text, exactly one paste, empty clipboard, the existing menu action and preserved tab-header context menus at 100% and 150%. |
 | Per-split tabs | Create, switch, close, reorder, move a tab, Shift-drag a group and detach into an edge split. Workspace-row drops move tabs or whole groups between workspaces in one runtime operation. Model and desktop HTML5 drag tests verify membership and restored layout; runtime tests verify process identity and rejected batches. Physical pointer dragging still needs manual validation. |
 | Tab interactions | Pointer double-click on empty pane-tab or workspace-list space creates exactly one item; single clicks and existing rows/controls retain their actions. Inline inputs cover the exact label bounds, preserve drafts across background rerenders and share pointer, keyboard and context-menu entrypoints. Enter, outside clicks and window blur save once; Escape cancels; blank names restore defaults. Failed saves retain drafts with translated inline errors. Full desktop restart restores custom panel names and reset workspace names. |
 | Tab presentation | Horizontal tabs prefer 160px and retain shrinking/overflow. Only the selected tab in the active pane gets a 2px blue top indicator; inactive selection remains gray. Sidebar hover/resize stays neutral while its divider, hit area and pointer resize work. Pointer, geometry, focus and resizing tests pass at 100% and 150%. |
@@ -45,6 +46,8 @@ Run from `windows/` after `npm ci` and `npm run build:renderer`:
 ```powershell
 npm test
 npm run test:shortcuts
+npm run test:paste
+npm run test:paste -- --force-device-scale-factor=1.5
 npm run test:tabs
 npm run test:tabs -- --force-device-scale-factor=1.5
 npm run test:parity

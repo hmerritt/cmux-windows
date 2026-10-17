@@ -21,12 +21,13 @@ app.once('browser-window-created',(_event,win)=>win.webContents.once('did-finish
     originalClipboard=await Promise.all((await clipboard.read()).map(async item=>new ClipboardItem(Object.fromEntries(await Promise.all(item.types.map(async type=>[type,await item.getType(type)]))))));
     win.setSize(1280,800);win.focus();win.webContents.focus();
     await waitFor("!!document.querySelector('.terminal-host:not(.is-connecting) .xterm-screen')");
-    await evaluate("window.pasteInputs=[];window.pasteOriginalSend=WebSocket.prototype.send;WebSocket.prototype.send=function(data){try{const message=JSON.parse(data);if(message.type==='input')window.pasteInputs.push({url:this.url,text:message.data})}catch{}return window.pasteOriginalSend.call(this,data)};void 0");
+    await evaluate("window.pasteInputs=[];window.pasteOriginalSend=WebSocket.prototype.send;WebSocket.prototype.send=function(data){try{const message=JSON.parse(data);if(message.type==='input' && ['right_click_Ω','inactive_paste','menu_paste'].includes(message.data))window.pasteInputs.push({url:this.url,text:message.data})}catch{}return window.pasteOriginalSend.call(this,data)};void 0");
     const firstId=await evaluate("document.querySelector('.pane.is-active').dataset.panelId");
     await clipboard.writeText('right_click_Ω');
     await click('.terminal-host .xterm-screen','right');
     await waitFor("window.pasteInputs.length===1");
     assert.equal(await evaluate('window.pasteInputs[0].text'),'right_click_Ω');
+    await waitFor("document.querySelector('.terminal-host .xterm-screen').textContent.includes('right_click_Ω')");
     assert.equal(await evaluate("!!document.querySelector('.context-menu:not([hidden])')"),false);
     await click('.pane.is-active .split-right');
     await waitFor("document.querySelectorAll('.terminal-host:not(.is-connecting)').length===2");
