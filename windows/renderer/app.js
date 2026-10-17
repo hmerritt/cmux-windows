@@ -13558,7 +13558,7 @@ function renderPaneTabStrip(pane, selected, workspace) {
     const add = document.createElement('button');
     add.type = 'button';
     add.className = 'pane-tool pane-new-tab';
-    add.textContent = '+';
+    add.innerHTML = controlIconMarkup('plus');
     add.title = t('menu.newTerminal', 'New Terminal');
     add.setAttribute('aria-label', add.title);
     add.onclick = event => { event.stopPropagation(); createTerminalTab(pane.dataset.panelId); };

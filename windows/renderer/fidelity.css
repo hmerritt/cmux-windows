@@ -149,7 +149,7 @@ body { font-size: 13px; }
 .pane-tab-drag-active webview { pointer-events:none; }
 .pane-tab.is-drop-before { box-shadow: inset 2px 0 #0a84ff; }
 .pane-tab.is-drop-after { box-shadow: inset -2px 0 #0a84ff; }
-#paneGrid .pane-new-tab { font: 20px/20px var(--font-ui); }
+#paneGrid .pane-new-tab { display: grid; place-items: center; padding: 0; }
 #paneGrid .pane-title { grid-column: 2; grid-row: 1; }
 #paneGrid .pane-toolbar { grid-column: 3; grid-row: 1; opacity: 1; pointer-events: auto; transform: none; max-inline-size: none; gap: 2px; }
 #paneGrid .pane-tool { flex: 0 0 20px; }
