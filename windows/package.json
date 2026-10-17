@@ -28,6 +28,7 @@
     "test:documents": "electron tests/documents-desktop.cjs",
     "test:search": "electron tests/search-desktop.cjs",
     "test:files": "electron tests/file-mutations-desktop.cjs",
+    "test:restore": "node tests/run-session-restore.cjs",
     "test:browser-layout": "electron tests/browser-layout-desktop.cjs",
     "test:paste": "electron tests/paste-desktop.cjs",
     "test:tabs": "node tests/run-tab-interactions.cjs",
