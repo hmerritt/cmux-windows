@@ -1073,7 +1073,7 @@ class CmuxWindowsRuntime {
     if (!found) return false;
     const { workspace, panel } = found;
     workspace.panels = workspace.panels.filter((candidate) => candidate.id !== panel.id);
-    workspace.activePanelId = workspace.panels[0]?.id || null;
+    if (workspace.activePanelId === panelId) workspace.activePanelId = workspace.panels[0]?.id || null;
     this.terminals.get(panel.id)?.close();
     this.terminals.delete(panel.id);
     this.persistAndBroadcast();

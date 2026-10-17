@@ -16,6 +16,7 @@ It does not execute Apple SwiftUI or the macOS GhosttyKit binary.
 | Tab interactions | Pointer double-click on empty pane-tab or workspace-list space creates exactly one item; single clicks and existing rows/controls retain their actions. Inline inputs cover the exact label bounds, preserve drafts across background rerenders and share pointer, keyboard and context-menu entrypoints. Enter, outside clicks and window blur save once; Escape cancels; blank names restore defaults. Failed saves retain drafts with translated inline errors. Full desktop restart restores custom panel names and reset workspace names. |
 | Tab presentation | Horizontal tabs prefer 160px and retain shrinking/overflow. Only the selected tab in the active pane gets a 2px blue top indicator; inactive selection remains gray. Sidebar hover/resize stays neutral while its divider, hit area and pointer resize work. Pointer, geometry, focus and resizing tests pass at 100% and 150%. |
 | Nested splits | Right and down splits, all panes visible at 640×480, 1280×800 and 1920×1080; terminal canvas fills the window. |
+| Middle-click tab close | Actual middle-button input closes only the clicked per-pane tab, including inactive tabs and the close icon. Sibling tabs and splits survive, inactive closes preserve pane focus, and empty strip space does nothing. Checked at 100% and 150%. |
 | Session restore | PowerShell and Command Prompt report each tab’s current directory, including hidden tabs. Full app restart verifies actual shell directories, workspace, split focus and selected tab; closing immediately after a pointer selection flushes pending focus before shutdown. Checked at 100% and 150%. |
 | Browser | Local fixture page loaded in a real guest, with sandbox enabled and Node integration disabled. Guest viewport fills the pane after window resizing and splitting at 100% and 150% scaling. |
 | Notifications | Runtime notification reaches workspace summary, attention ring and bell count; notification panel opens. |
@@ -47,6 +48,8 @@ Run from `windows/` after `npm ci` and `npm run build:renderer`:
 ```powershell
 npm test
 npm run test:shortcuts
+npm run test:middle-click
+npm run test:middle-click -- --force-device-scale-factor=1.5
 npm run test:restore
 npm run test:restore -- --force-device-scale-factor=1.5
 npm run test:browser-layout

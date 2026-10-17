@@ -13419,7 +13419,10 @@ function createPane(panel) {
   });
   pane.addEventListener("wheel", handlePaneWheelZoom, { passive: false, capture: true });
   pane.addEventListener("focusin", () => markInteractedPanel(pane.dataset.panelId));
-  pane.addEventListener("pointerdown", () => markInteractedPanel(pane.dataset.panelId), { capture: true });
+  pane.addEventListener("pointerdown", event => {
+    if (event.button === 1 && event.target.closest('.pane-tab')) return;
+    markInteractedPanel(pane.dataset.panelId);
+  }, { capture: true });
   const header = parts.header;
   header.draggable = false;
   header.addEventListener("click", () => {
@@ -13593,6 +13596,15 @@ function renderPaneTabStrip(pane, selected, workspace) {
     close.setAttribute('aria-label', t('tab.close', 'Close'));
     close.onclick = event => { event.stopPropagation(); closePanel(member.id); };
     tab.onclick = event => { event.stopPropagation(); focusPanel(member.id); };
+    tab.addEventListener('mousedown', event => {
+      if (event.button === 1) event.preventDefault();
+    });
+    tab.addEventListener('auxclick', event => {
+      if (event.button !== 1) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closePanel(member.id);
+    });
     tab.draggable=true;
     tab.addEventListener('dragstart',event=>{
       if(event.target.closest('.pane-tab-close')){event.preventDefault();return;}
@@ -42897,7 +42909,7 @@ function optimisticClosePanel(panelId, renderNow = true) {
     if (zoomedPanelId === panelId) state.zoomedPanelIds.delete(workspaceId);
   }
   found.workspace.panels = found.workspace.panels.filter((candidate) => candidate.id !== panelId);
-  found.workspace.activePanelId = found.workspace.panels[0]?.id || null;
+  if (found.workspace.activePanelId === panelId) found.workspace.activePanelId = found.workspace.panels[0]?.id || null;
   refreshWorkspaceCounts(found.workspace);
   if (renderNow) render();
   return true;
