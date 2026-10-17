@@ -24,6 +24,16 @@ app.once('browser-window-created',(_event,win)=>win.webContents.once('did-finish
       for(const workspace of expected.workspaces){const saved=restored.workspaces.find(item=>item.id===workspace.id);assert.equal(saved.title,workspace.title);for(const panel of workspace.panels.filter(panel=>panel.titleLocked))assert.equal(saved.panels.find(item=>item.id===panel.id).title,panel.title);}
       console.log('PASS full desktop restart: custom panel and workspace reset names restored');return;
     }
+    const toolbarButtons=await evaluate("[...document.querySelectorAll('.pane-toolbar .pane-tool')].filter(button=>button.getBoundingClientRect().width>0).map(button=>({selector:'.pane-tool.'+[...button.classList].find(name=>name!=='pane-tool'),label:button.getAttribute('aria-label')}))");
+    for(const button of toolbarButtons){
+      const hover=await point(button.selector);win.webContents.sendInputEvent({type:'mouseMove',...hover});await delay(70);
+      const alignment=await evaluate(`(()=>{const b=document.querySelector(${JSON.stringify(button.selector)}),r=b.getBoundingClientRect(),s=b.querySelector('svg').getBoundingClientRect();return {hover:b.matches(':hover'),x:Math.abs(r.x+r.width/2-s.x-s.width/2),y:Math.abs(r.y+r.height/2-s.y-s.height/2)}})()`);
+      assert(alignment.hover,button.label+' hover box is active');
+      assert(alignment.x<0.6,button.label+' icon must be centered horizontally within its hover box');
+      assert(alignment.y<0.6,button.label+' icon must be centered vertically within its hover box');
+    }
+    win.webContents.sendInputEvent({type:'mouseMove',x:0,y:0});
+    console.log('PASS toolbar hover: every visible icon is centered in its button');
     const plusBounds=await evaluate("(()=>{const r=document.querySelector('.pane-new-tab').getBoundingClientRect();return {x:Math.floor(r.x),y:Math.floor(r.y),width:Math.ceil(r.width),height:Math.ceil(r.height)}})()");
     const plusImage=await win.webContents.capturePage(plusBounds),plusSize=plusImage.getSize(),plusPixels=plusImage.toBitmap();
     let minX=plusSize.width,minY=plusSize.height,maxX=-1,maxY=-1;
