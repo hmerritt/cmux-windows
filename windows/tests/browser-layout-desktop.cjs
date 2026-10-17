@@ -30,6 +30,8 @@ app.once('browser-window-created',(_event,win)=>win.webContents.once('did-finish
     async function checkLayout(label){
       await delay(400);
       const bounds=await evaluate(`(()=>{const view=document.querySelector('.browser-view');const content=view.closest('.browser-content').getBoundingClientRect();const body=view.closest('.pane-body').getBoundingClientRect();const host=view.getBoundingClientRect();return {width:host.width,height:host.height,bottom:host.bottom,contentBottom:content.bottom,bodyBottom:body.bottom}})()`);
+      for(let n=0;n<80;n++){guest=webContents.getAllWebContents().find(contents=>contents.getType()==='webview' && contents.getTitle()==='Browser layout fixture');if(guest)break;await delay(100);}
+      assert(guest,label+': browser guest remains available');
       const viewport=await guest.executeJavaScript('({width:innerWidth,height:innerHeight})');
       assert(bounds.height>200,label+': browser has available pane height');
       assert(Math.abs(bounds.bottom-bounds.bodyBottom)<=2,label+': browser host fills pane bottom');

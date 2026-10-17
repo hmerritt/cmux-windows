@@ -16,7 +16,7 @@ It does not execute Apple SwiftUI or the macOS GhosttyKit binary.
 | Tab interactions | Pointer double-click on empty pane-tab or workspace-list space creates exactly one item; single clicks and existing rows/controls retain their actions. Inline inputs cover the exact label bounds, preserve drafts across background rerenders and share pointer, keyboard and context-menu entrypoints. Enter, outside clicks and window blur save once; Escape cancels; blank names restore defaults. Failed saves retain drafts with translated inline errors. Full desktop restart restores custom panel names and reset workspace names. |
 | Tab presentation | Horizontal tabs prefer 160px and retain shrinking/overflow. Only the selected tab in the active pane gets a 2px blue top indicator; inactive selection remains gray. Sidebar hover/resize stays neutral while its divider, hit area and pointer resize work. Pointer, geometry, focus and resizing tests pass at 100% and 150%. |
 | Nested splits | Right and down splits, all panes visible at 640×480, 1280×800 and 1920×1080; terminal canvas fills the window. |
-| Browser | Local fixture page loaded in a real guest, with sandbox enabled and Node integration disabled. |
+| Browser | Local fixture page loaded in a real guest, with sandbox enabled and Node integration disabled. Guest viewport fills the pane after window resizing and splitting at 100% and 150% scaling. |
 | Notifications | Runtime notification reaches workspace summary, attention ring and bell count; notification panel opens. |
 | Restoration | Full process restart retains workspace, four terminal processes represented by three visible splits, tab membership and nested split tree. Shell processes are recreated on full desktop exit. |
 | Display scaling | Desktop integration passes at 100% and 150%. |
@@ -46,6 +46,8 @@ Run from `windows/` after `npm ci` and `npm run build:renderer`:
 ```powershell
 npm test
 npm run test:shortcuts
+npm run test:browser-layout
+npm run test:browser-layout -- --force-device-scale-factor=1.5
 npm run test:paste
 npm run test:paste -- --force-device-scale-factor=1.5
 npm run test:tabs

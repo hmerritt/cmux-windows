@@ -5708,6 +5708,11 @@ body.reduce-motion .surface-new-tab.is-creating.is-waiting:not(:disabled) .surfa
   transition: opacity var(--dur-fast) var(--ease-out);
 }
 
+/* Electron stretches its internal guest iframe through the webview flex host. */
+webview.browser-view {
+  display: flex;
+}
+
 .browser-error {
   grid-area: 1 / 1;
   z-index: 2;
