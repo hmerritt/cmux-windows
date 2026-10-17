@@ -8,6 +8,7 @@ const { fileURLToPath } = require("node:url");
 const { spawn, spawnSync } = require("node:child_process");
 const { WebSocket, WebSocketServer } = require("ws");
 const { t } = require("./i18n.cjs");
+const {TerminalDirectoryReports, directoryReportingShellArgs} = require("./terminal-directory.cjs");
 
 let pty = null;
 try {
@@ -488,12 +489,6 @@ function cleanTerminalTitle(rawTitle) {
   return title.slice(0, 80);
 }
 
-function shellArgs(shellPath) {
-  const base = path.basename(shellPath).toLowerCase();
-  if (base === "pwsh.exe" || base === "powershell.exe") return ["-NoLogo"];
-  return [];
-}
-
 function tokensMatch(expected, actual) {
   const left = Buffer.from(String(expected || ""));
   const right = Buffer.from(String(actual || ""));
@@ -600,6 +595,7 @@ class TerminalProcess {
     this.closed = false;
     this.ptyProcess = null;
     this.child = null;
+    this.directoryReports = new TerminalDirectoryReports();
     this.panelToken = crypto.randomBytes(32).toString("hex");
     this.start();
   }
@@ -610,7 +606,7 @@ class TerminalProcess {
       ? this.panel.cwd
       : os.homedir();
     if (pty) {
-      this.ptyProcess = pty.spawn(shellPath, shellArgs(shellPath), {
+      this.ptyProcess = pty.spawn(shellPath, directoryReportingShellArgs(shellPath), {
         name: "xterm-256color",
         cols: this.cols,
         rows: this.rows,
@@ -629,7 +625,7 @@ class TerminalProcess {
       return;
     }
 
-    this.child = spawn(shellPath, shellArgs(shellPath), {
+    this.child = spawn(shellPath, directoryReportingShellArgs(shellPath), {
       cwd,
       env: terminalProcessEnv(this.panel, this.panelToken),
       stdio: "pipe",
@@ -667,6 +663,15 @@ class TerminalProcess {
   }
 
   emitOutput(data) {
+    for (const reported of this.directoryReports.read(data)) {
+      const cwd = sanitizeDirectoryPath(reported, "");
+      if (cwd && cwd !== this.panel.cwd) {
+        this.panel.cwd = cwd;
+        const workspace = this.panel.runtime.findPanel(this.panel.id)?.workspace;
+        if (workspace?.activePanelId === this.panel.id) workspace.cwd = cwd;
+        this.panel.runtime.scheduleTerminalMetadataBroadcast();
+      }
+    }
     this.backlog = (this.backlog + data).slice(-200000);
     const titleMatch = data.match(/\x1b\]0;([^\x07\x1b]+)\x07/);
     if (titleMatch?.[1] && !this.panel.titleLocked) {
@@ -823,6 +828,9 @@ class CmuxWindowsRuntime {
           color: panel.color || "",
           backgroundImage: panel.type === "terminal" ? sanitizeBackgroundImageValue(panel.backgroundImage) : "",
           cwd: panel.cwd,
+          filePath: panel.filePath || '',
+          diffSource: panel.diffSource || 'unstaged',
+          diffBase: panel.diffBase || '',
           shellProfile: panel.type === "terminal" ? sanitizeShellProfile(panel.shellProfile) : "",
           shellPath: panel.type === "terminal" ? sanitizeShellPath(panel.shellPath) : "",
           terminalFontSize: panel.type === "terminal" ? sanitizeTerminalFontSize(panel.terminalFontSize, 0) : 0,
@@ -866,6 +874,9 @@ class CmuxWindowsRuntime {
       color: isSafeColorValue(options.color) ? options.color : "",
       backgroundImage: type === "terminal" ? sanitizeBackgroundImageValue(options.backgroundImage) : "",
       cwd: sanitizeDirectoryPath(options.cwd),
+      filePath: type === 'markdown' ? String(options.filePath || '') : '',
+      diffSource: type==='diff' && ['staged','branch'].includes(options.diffSource)?options.diffSource:'unstaged',
+      diffBase: type==='diff'?String(options.diffBase || '').slice(0,1024):'',
       shellProfile: type === "terminal" ? sanitizeShellProfile(options.shellProfile) : "",
       shellPath: type === "terminal" ? sanitizeShellPath(options.shellPath) : "",
       terminalFontSize: type === "terminal" ? sanitizeTerminalFontSize(options.terminalFontSize, 0) : 0,
@@ -933,6 +944,9 @@ class CmuxWindowsRuntime {
       color: panel.color || "",
       backgroundImage: panel.type === "terminal" ? sanitizeBackgroundImageValue(panel.backgroundImage) : "",
       cwd: panel.cwd,
+      filePath: panel.filePath || '',
+      diffSource: panel.diffSource || 'unstaged',
+      diffBase: panel.diffBase || '',
       cwdShort: shortPath(panel.cwd),
       shellProfile: panel.shellProfile || "",
       shellPath: panel.shellPath || "",
@@ -1059,7 +1073,7 @@ class CmuxWindowsRuntime {
     if (!found) return false;
     const { workspace, panel } = found;
     workspace.panels = workspace.panels.filter((candidate) => candidate.id !== panel.id);
-    workspace.activePanelId = workspace.panels[0]?.id || null;
+    if (workspace.activePanelId === panelId) workspace.activePanelId = workspace.panels[0]?.id || null;
     this.terminals.get(panel.id)?.close();
     this.terminals.delete(panel.id);
     this.persistAndBroadcast();
@@ -1099,6 +1113,25 @@ class CmuxWindowsRuntime {
     return true;
   }
 
+  movePanels(panelIds, targetWorkspaceId, activePanelId) {
+    const target=this.state.workspaces.find(workspace=>workspace.id===targetWorkspaceId);
+    if(!target || !Array.isArray(panelIds) || !panelIds.length || new Set(panelIds).size!==panelIds.length || !panelIds.includes(activePanelId))return false;
+    const found=panelIds.map(panelId=>this.findPanel(panelId));
+    const source=found[0]?.workspace;
+    if(!source || source===target || found.some(item=>!item || item.workspace!==source))return false;
+    const moving=new Set(panelIds);
+    source.panels=source.panels.filter(panel=>!moving.has(panel.id));
+    if(moving.has(source.activePanelId))source.activePanelId=source.panels[0]?.id || null;
+    for(const {panel} of found) {
+      panel.workspaceId=target.id;
+      target.panels.push(panel);
+    }
+    target.activePanelId=activePanelId;
+    this.state.activeWorkspaceId=target.id;
+    this.persistAndBroadcast();
+    return true;
+  }
+
   updatePanel(panelId, updates = {}) {
     if (Object.hasOwn(updates, "workspaceId") || Object.hasOwn(updates, "beforePanelId") || Object.hasOwn(updates, "moveToEnd")) {
       const ok = this.movePanel(panelId, updates.workspaceId, updates.moveToEnd ? null : updates.beforePanelId);
@@ -1106,6 +1139,14 @@ class CmuxWindowsRuntime {
     }
     const found = this.findPanel(panelId);
     if (!found) return false;
+    if(found.panel.type==='diff') {
+      if(Object.hasOwn(updates,'diffSource'))found.panel.diffSource=['staged','branch'].includes(updates.diffSource)?updates.diffSource:'unstaged';
+      if(Object.hasOwn(updates,'diffBase'))found.panel.diffBase=String(updates.diffBase || '').slice(0,1024);
+    }
+    if(Object.hasOwn(updates,'filePath') && found.panel.type==='markdown') {
+      found.panel.filePath=String(updates.filePath || '');
+      if(!found.panel.titleLocked)found.panel.title=path.basename(found.panel.filePath);
+    }
     if (Object.hasOwn(updates, "title")) {
       const title = String(updates.title || "").trim();
       if (title) {
@@ -1184,8 +1225,8 @@ class CmuxWindowsRuntime {
     if (!workspace) return false;
     if (Object.hasOwn(updates, "title")) {
       const trimmed = String(updates.title || "").trim();
-      if (!trimmed) return false;
-      workspace.title = trimmed.slice(0, 80);
+      const used=new Set(this.state.workspaces.filter(item=>item.id!==workspaceId).map(item=>normalizedTitleKey(item.title)));
+      workspace.title = trimmed?trimmed.slice(0,80):generatedWorkspaceTitleFromUsed(path.basename(workspace.cwd || '') || 'Workspace',used);
     }
     if (Object.hasOwn(updates, "color")) {
       const color = String(updates.color || "").trim();
@@ -1335,6 +1376,11 @@ class CmuxWindowsRuntime {
         writeJSON(response, 200, this.serializeWorkspace(this.createWorkspaceFromOptions(body, { prewarmResponse: response })));
         return;
       }
+      if (request.method === "POST" && url.pathname === "/api/session/save") {
+        this.persistSession();
+        writeJSON(response, 200, { ok: true });
+        return;
+      }
       if (request.method === "POST" && url.pathname === "/api/session/reset") {
         writeJSON(response, 200, this.resetSession());
         return;
@@ -1379,6 +1425,12 @@ class CmuxWindowsRuntime {
       if (request.method === "DELETE" && panelDeleteMatch) {
         const ok = this.closePanel(panelDeleteMatch[1]);
         writeJSON(response, ok ? 200 : 409, { ok });
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/panels/transfer") {
+        const body=await readBody(request);
+        const ok=this.movePanels(body.panelIds,body.workspaceId,body.activePanelId);
+        writeJSON(response,ok?200:409,{ok});
         return;
       }
       const panelUpdateMatch = url.pathname.match(/^\/api\/panels\/([^/]+)$/);
@@ -1786,6 +1838,7 @@ class CmuxWindowsRuntime {
       if (pending.handleType === "response") pending.response?.removeListener?.("finish", pending.handle);
     }
     this.pendingTerminalPrewarms.clear();
+    this.persistSession();
     for (const terminal of this.terminals.values()) terminal.close();
     this.terminals.clear();
     for (const socket of this.eventSockets) socket.close();

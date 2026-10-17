@@ -6,6 +6,26 @@ function storage(initial='[]') {
   return {getItem:key=>values.get(key),setItem:(key,value)=>values.set(key,value)};
 }
 const workspace = activePanelId=>({id:'w',activePanelId,panels:['a','b','c'].map(id=>({id}))});
+test('moving an inactive tab to another workspace retains source selection and split ratios',()=>{
+  const tabs=new PaneTabGroups(storage());tabs.add('w','a','c');tabs.visiblePanels(workspace('a'));
+  const tree={type:'split',id:'s',ratio:.3,direction:'right',first:{type:'pane',panelId:'a'},second:{type:'pane',panelId:'b'}};
+  const destination={id:'other',activePanelId:'d',panels:[{id:'d'}]};
+  const result=tabs.moveToWorkspace(tree,{type:'pane',panelId:'d'},workspace('a'),destination,'c');
+  assert.deepEqual(result.panelIds,['c']);assert.deepEqual(result.sourceTree,tree);
+  assert.equal(result.targetTree.second.panelId,'c');
+  assert.deepEqual(tabs.groupFor('a').members,['a']);
+  assert.equal(tabs.groupFor('c'),undefined);
+});
+test('moving a group across workspaces preserves its order, selection and saved ownership',()=>{
+  const saved=storage(),tabs=new PaneTabGroups(saved);tabs.add('w','a','c');
+  const result=tabs.moveToWorkspace({type:'pane',panelId:'c'},null,workspace('c'),{id:'other',panels:[]},'a',{wholeGroup:true});
+  assert.deepEqual(result.panelIds,['a','c']);assert.equal(result.sourceTree,null);
+  assert.deepEqual(result.targetTree,{type:'pane',panelId:'a'});
+  const restored=new PaneTabGroups(saved);
+  assert.equal(restored.groupFor('a').workspaceId,'other');
+  assert.deepEqual(restored.groupFor('a').members,['a','c']);
+  assert.equal(restored.groupFor('a').active,'a');
+});
 test('switching tabs replaces only its leaf and preserves split ratios',()=>{
   const tabs=new PaneTabGroups(storage());
   tabs.add('w','a','c');

@@ -1,4 +1,5 @@
 import {catalog,ShortcutRouter,parseBinding} from './shortcut-engine.mjs';
+import {workspaceFileEditorFor} from './file-editor.mjs';
 import {actionAvailable,actionPriority,scopes} from './shortcut-scopes.mjs';
 import {shortcutDialog,createShortcutSettings,shortcutText,actionLabel} from './shortcut-ui.mjs';
 export const menuActions = {
@@ -32,11 +33,14 @@ export function installWindowsShortcuts(e) {
   const guestId=()=>{try{return browser()?.getWebContentsId();}catch{return undefined;}};
   function context(target=document.activeElement) {
     const input=e.isFormEditableTarget(target);
+    const fileEditor=workspaceFileEditorFor(target);
     const current=panel();
     const sidebarFocus=Boolean(target?.closest?.('.sidebar,.inspector'));
+    const markdownFocus=current?.type==='markdown' && (!input || Boolean(target?.closest?.('.document-find'))) && !sidebarFocus;
+    const diffFocus=current?.type==='diff' && !sidebarFocus;
     const terminalFocus=!sidebarFocus && current?.type==='terminal' && (!input || Boolean(target?.closest?.('.terminal-search')));
     const browserFocus=!sidebarFocus && current?.type==='browser' && (!input || Boolean(target?.closest?.('.browser-bar')));
-    return {terminalFocus,browserFocus,textInputFocus:input,sidebarFocus:Boolean(target?.closest?.('.sidebar,.inspector')),fileExplorerFocus:state.inspectorMode==='files' && Boolean(target?.closest?.('.workspace-file-tree')),commandPaletteVisible:state.paletteOpen,terminalAlternateScreen:terminal()?.term.buffer.active.type==='alternate',terminalCopyMode:Boolean(copyMode),dialogOpen:Boolean(state.activeDialog)||settings.isOpen(),appFocus:true};
+    return {terminalFocus,browserFocus,markdownFocus,diffFocus,fileEditorFocus:Boolean(fileEditor),fileEditorEditable:Boolean(fileEditor?.editable),textInputFocus:input,sidebarFocus:Boolean(target?.closest?.('.sidebar,.inspector')),fileExplorerFocus:state.inspectorMode==='files' && Boolean(target?.closest?.('.workspace-file-tree')),commandPaletteVisible:state.paletteOpen,terminalAlternateScreen:terminal()?.term.buffer.active.type==='alternate',terminalCopyMode:Boolean(copyMode),dialogOpen:Boolean(state.activeDialog)||settings.isOpen(),appFocus:true};
   }
   function focus(id) { if(id) return e.focusPanel(id); }
   function visiblePanels() {
@@ -157,6 +161,10 @@ export function installWindowsShortcuts(e) {
     event.preventDefault();event.stopPropagation();return true;
   }
   const handlers={
+    openDiffViewer:e.openDiffViewer,
+    markdownZoomIn:()=>e.documentPanes.zoom(panel()?.id,1),
+    markdownZoomOut:()=>e.documentPanes.zoom(panel()?.id,-1),
+    markdownZoomReset:()=>e.documentPanes.zoom(panel()?.id,0,true),
     openSettings:()=>e.openSettingsCategory('actions'),
     reloadConfiguration:async()=>accept(await window.cmuxNative.reloadShortcuts()),
     newWindow:()=>window.cmuxNative.nativeShortcut('newWindow'),
@@ -209,6 +217,9 @@ export function installWindowsShortcuts(e) {
     resetWorkspaceTerminalFontSize:()=>e.activeWorkspace()?.panels.filter(p=>p.type==='terminal').forEach(p=>e.resetPaneTerminalFontSize(p.id,{toast:false})),
     focusRightSidebar:()=>{if(!state.inspectorMode)e.openWorkspaceFiles();else elements.inspector.querySelector('button,input')?.focus();},
     switchRightSidebarToFiles:e.openWorkspaceFiles,
+    findInDirectory:e.openWorkspaceSearch,
+    saveFilePreview:()=>workspaceFileEditorFor(document.activeElement,{fallback:true})?.save(),
+    toggleFileEditorWordWrap:()=>workspaceFileEditorFor(document.activeElement,{fallback:true})?.toggleWordWrap(),
     fileExplorerOpenSelection:()=>e.workspaceFileExplorer.openSelection(),
     fileExplorerOpenSelectionFinderAlias:()=>e.workspaceFileExplorer.openSelection(),
     toggleFileExplorer:()=>{if(state.inspectorMode==='files')e.openInspector('files');else e.openWorkspaceFiles();},
@@ -222,16 +233,17 @@ export function installWindowsShortcuts(e) {
     showBrowserJavaScriptConsole:()=>window.cmuxNative.nativeShortcut('showBrowserJavaScriptConsole',guestId()),
     toggleBrowserFocusMode:()=>e.togglePaneZoom(panel()?.id),
     toggleBrowserDesignMode:()=>browser()?.executeJavaScript("document.designMode = document.designMode === 'on' ? 'off' : 'on'"),
-    find:()=>panel()?.type==='browser'?findBrowser():e.openTerminalSearch(panel()),
-    findNext:()=>panel()?.type==='browser'?findBrowser(true):e.findNextInTerminal(panel()),
-    findPrevious:()=>panel()?.type==='browser'?findBrowser(true,false):e.findPreviousInTerminal(panel()),
-    hideFind:()=>panel()?.type==='browser'?window.cmuxNative.nativeShortcut('hideFind',guestId()):e.closeTerminalSearch(panel()),
+    find:()=>panel()?.type==='markdown'?e.documentPanes.find(panel()?.id):panel()?.type==='browser'?findBrowser():e.openTerminalSearch(panel()),
+    findNext:()=>panel()?.type==='markdown'?e.documentPanes.find(panel()?.id,{next:true}):panel()?.type==='browser'?findBrowser(true):e.findNextInTerminal(panel()),
+    findPrevious:()=>panel()?.type==='markdown'?e.documentPanes.find(panel()?.id,{next:true,forward:false}):panel()?.type==='browser'?findBrowser(true,false):e.findPreviousInTerminal(panel()),
+    hideFind:()=>panel()?.type==='markdown'?e.documentPanes.find(panel()?.id,{hide:true}):panel()?.type==='browser'?window.cmuxNative.nativeShortcut('hideFind',guestId()):e.closeTerminalSearch(panel()),
     useSelectionForFind:()=>{const session=terminal(),text=session?.term.getSelection();if(text){e.openTerminalSearch(panel());const input=e.terminalSearchInput(session);input.value=text;input.dispatchEvent(new Event('input'));}}
   };
   for(const direction of ['Left','Right','Up','Down','PreviousPane','NextPane']) {
     const id='moveSurfaceTo'+(direction.endsWith('Pane')?direction:'Pane'+direction);
     handlers[id]=()=>moveTab(direction.replace('Pane','').toLowerCase());
   }
+  for(const [id,scope] of Object.entries(scopes))if(scope==='diff')handlers[id]=()=>e.diffPanes.action(panel()?.id,id);
   for(const direction of ['left','right','up','down'])handlers[`resize-pane-${direction}`]=()=>resize(direction);
   for(const id of Object.keys(scopes))if(!handlers[id])throw new Error(`Missing Windows shortcut handler: ${id}`);
   function run(id,digit,repeat=false) {

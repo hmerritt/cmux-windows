@@ -80,8 +80,33 @@ test('unavailable features never consume keys and every registered default can l
     const signature=JSON.stringify(entry.strokes);if(!groups.has(signature))groups.set(signature,[]);groups.get(signature).push(entry.id);
   }
   for(const ids of groups.values())if(ids.length>1) {
-    assert(ids.every(id=>['browserBack','browserForward','browserReload','browserHardReload','focusHistoryBack','focusHistoryForward','renameTab','renameWorkspace','commandPaletteNext','commandPalettePrevious','newTab','goToWorkspace'].includes(id)),`Unexpected default collision: ${ids}`);
+    assert(ids.every(id=>['browserBack','browserForward','browserReload','browserHardReload','focusHistoryBack','focusHistoryForward','renameTab','renameWorkspace','commandPaletteNext','commandPalettePrevious','newTab','goToWorkspace','splitRight','diffViewerScrollDownEmacs','diffViewerScrollUpEmacs','diffViewerScrollHalfPageDown','browserZoomIn','browserZoomOut','browserZoomReset','markdownZoomIn','markdownZoomOut','markdownZoomReset'].includes(id)),`Unexpected default collision: ${ids}`);
   }
+});
+test('document shortcuts preserve contextual zoom, diff scrolling and text input',()=>{
+  const r=router(),diff={diffFocus:true},markdown={markdownFocus:true};
+  assert.equal(r.handle(event('n'),diff,actionAvailable).id,'diffViewerScrollDownEmacs');
+  assert.equal(r.handle(event('p'),diff,actionAvailable).id,'diffViewerScrollUpEmacs');
+  assert.equal(r.handle(event('d'),diff,actionAvailable).id,'diffViewerScrollHalfPageDown');
+  assert.equal(r.handle(event('d'),terminal,actionAvailable).id,'splitRight');
+  assert.equal(r.handle(event('n'),{commandPaletteVisible:true},actionAvailable).id,'commandPaletteNext');
+  assert.equal(r.handle(event('='),markdown,actionAvailable).id,'markdownZoomIn');
+  assert.equal(r.handle(event('='),browser,actionAvailable).id,'browserZoomIn');
+  assert.equal(r.handle(event('f'),markdown,actionAvailable).id,'find');
+  assert.equal(r.handle(event('v',{ctrlKey:false}),{diffFocus:true,textInputFocus:true},actionAvailable),null);
+  assert.equal(r.handle(event('v',{ctrlKey:false}),diff,actionAvailable).id,'diffViewerToggleViewed');
+});
+test('file-editor actions stay scoped and save honors rebinds and unbinding',()=>{
+  const r=router(),editor={fileEditorFocus:true,fileEditorEditable:true,textInputFocus:true};
+  assert.equal(r.handle(event('s'),editor,actionAvailable).id,'saveFilePreview');
+  assert.equal(r.handle(event('z',{ctrlKey:false,altKey:true}),editor,actionAvailable).id,'toggleFileEditorWordWrap');
+  assert.equal(r.handle(event('s'),terminal,actionAvailable),null);
+  assert.equal(r.handle(event('s'),{fileEditorFocus:true,fileEditorEditable:false},actionAvailable),null);
+  r.configure({bindings:{saveFilePreview:'ctrl+alt+s'}});
+  assert.equal(r.handle(event('s'),editor,actionAvailable),null);
+  assert.equal(r.handle(event('s',{altKey:true}),editor,actionAvailable).id,'saveFilePreview');
+  r.configure({bindings:{saveFilePreview:null}});
+  assert.equal(r.handle(event('s'),editor,actionAvailable),null);
 });
 test('JSONC updates preserve unrelated settings/comments, reload edits and retain last good bindings on invalid input',()=>{
   const folder=fs.mkdtempSync(path.join(os.tmpdir(),'cmux-shortcut-config-')),file=path.join(folder,'cmux.json');

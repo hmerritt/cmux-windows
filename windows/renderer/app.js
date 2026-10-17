@@ -1,8 +1,17 @@
 import "./chrome.js";
+import {createInlineRename} from './inline-rename.mjs';
+const inlineRename=createInlineRename({errorText:()=>parityText('renameSaveError')});
 import {parityText} from './parity-messages.mjs';
 import {containModalFocus} from './modal-focus.mjs';
 import {createWorkspaceFileExplorer} from './workspace-files.mjs';
-const workspaceFileExplorer=createWorkspaceFileExplorer();
+import {createWorkspaceSearch} from './workspace-search.mjs';
+import {moveWorkspaceFileDrafts} from './file-editor.mjs';
+import {createDocumentPanes} from './document-panes.mjs';
+import {createDiffPanes} from './diff-panes.mjs';
+const diffPanes=createDiffPanes({onSourceChange:(id,updates)=>api(`/api/panels/${id}`,{method:'PATCH',body:JSON.stringify(updates)})});
+const documentPanes=createDocumentPanes({openMarkdown:(root,filePath)=>openMarkdownDocument(root,filePath)});
+const workspaceFileExplorer=createWorkspaceFileExplorer({showMenu:showWorkspaceFileContextMenu,openMarkdown:(root,filePath)=>openMarkdownDocument(root,filePath),prompt:options=>showTextDialog(options),beforeRename:(root,oldPath,newPath)=>moveWorkspaceFileDrafts(root,oldPath,newPath,{validateOnly:true}),onRename:(root,oldPath,newPath)=>renameWorkspaceDocumentReferences(root,oldPath,newPath)});
+const workspaceSearch=createWorkspaceSearch();
 import {PaneTabGroups, replaceTreePanel} from "./pane-tab-groups.js";
 const paneTabGroups = new PaneTabGroups(localStorage);
 import {
@@ -257,6 +266,8 @@ const workspaceColorOptions = [...new Set([
   "oklch(76% 0.15 82)"
 ])];
 const controlIconSvg = {
+  markdown: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h9l5 5v13H5Z"></path><path d="M14 3v6h5M8 13h8M8 17h6"></path></svg>`,
+  diff: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M12 4v16M5 10h5M17 8v6M14 11h6"></path></svg>`,
   arrowRight: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path></svg>`,
   back: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 18-6-6 6-6"></path></svg>`,
   caseMatch: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 17 9 7l5 10"></path><path d="M6 13h6"></path><path d="M17 13h2a2 2 0 0 1 0 4h-3V9a2 2 0 0 1 4 0"></path></svg>`,
@@ -493,6 +504,7 @@ const layoutSettingsPreviewKeys = new Set([
   "statusbarStyle",
   "sidebarWidth",
   "inspectorWidth",
+  "rightSidebarWidth",
   "performanceMode"
 ]);
 const surfaceTabLayoutKeys = new Set([
@@ -593,6 +605,7 @@ const settingsInspectorSettingKeys = {
     "statusbarStyle",
     "sidebarWidth",
     "inspectorWidth",
+    "rightSidebarWidth",
     "performanceMode"
   ],
   performance: [
@@ -1622,6 +1635,7 @@ function normalizeSettings(input = {}, legacyFontSize = 0) {
   next.terminalCursorColor = normalizeTerminalColor(next.terminalCursorColor);
   next.sidebarWidth = clamp(next.sidebarWidth, 188, 304);
   next.inspectorWidth = clamp(next.inspectorWidth, inspectorWidthMin, inspectorWidthMax);
+  next.rightSidebarWidth = clamp(Number.isFinite(Number(next.rightSidebarWidth)) ? Number(next.rightSidebarWidth) : 295, 295, 1200);
   next.terminalScrollback = clamp(next.terminalScrollback, 2000, 50000);
   next.terminalPadding = clamp(next.terminalPadding, 0, 16);
   return next;
@@ -4040,7 +4054,7 @@ function createWorkspaceBlueprintId() {
 }
 
 function normalizeBlueprintPanel(panel = {}) {
-  const type = panel.type === "browser" ? "browser" : "terminal";
+  const type = ['browser','markdown','diff'].includes(panel.type)?panel.type:'terminal';
   const title = String(panel.title || (type === "browser" ? "Browser" : "Terminal")).trim().slice(0, 80);
   const color = normalizeBlueprintColor(panel.color);
   const shellProfile = terminalProfiles.some(([id]) => id === panel.shellProfile) ? panel.shellProfile : defaultSettings.terminalProfile;
@@ -4051,6 +4065,9 @@ function normalizeBlueprintPanel(panel = {}) {
     color,
     backgroundImage,
     cwd: String(panel.cwd || "").trim().slice(0, 512),
+    filePath: type==='markdown'?String(panel.filePath || ''):'',
+    diffSource: type==='diff'?panel.diffSource:undefined,
+    diffBase: type==='diff'?panel.diffBase:undefined,
     shellProfile,
     shellPath: String(panel.shellPath || "").trim().slice(0, 512),
     terminalFontSize: type === "terminal" ? normalizeTerminalFontSize(panel.terminalFontSize, 0) : 0,
@@ -7150,6 +7167,7 @@ function settingsRenderSignature(settings = state.settings) {
     settings.workspaceColorStyle,
     settings.sidebarWidth,
     settings.inspectorWidth,
+    settings.rightSidebarWidth,
     settings.terminalRenderer,
     settings.terminalFontFamily,
     settings.terminalFontSize,
@@ -7189,6 +7207,7 @@ function applySettings() {
   setStylePropertyIfChanged(document.documentElement, "--surface-tint-active", surfaceTint.active);
   setStylePropertyIfChanged(elements.shell, "--sidebar-width", `${state.settings.sidebarWidth}px`);
   setStylePropertyIfChanged(elements.shell, "--inspector-width", `${state.settings.inspectorWidth}px`);
+  setStylePropertyIfChanged(elements.shell, "--tool-sidebar-preferred-width", `${state.settings.rightSidebarWidth}px`);
   setStylePropertyIfChanged(elements.shell, "--terminal-font-family", terminalFontStack());
   setStylePropertyIfChanged(elements.shell, "--terminal-padding", `${state.settings.terminalPadding}px`);
   const tabMetrics = tabSizeMetrics.get(state.settings.tabSize) || tabSizeMetrics.get(defaultSettings.tabSize);
@@ -10497,6 +10516,9 @@ function appendPanelSignature(parts, panel = {}) {
   appendSignatureValue(parts, panel.shellPath || "");
   appendSignatureValue(parts, panel.terminalFontSize || 0);
   appendSignatureValue(parts, panel.url);
+  appendSignatureValue(parts, panel.filePath || '');
+  appendSignatureValue(parts, panel.diffSource || '');
+  appendSignatureValue(parts, panel.diffBase || '');
   appendSignatureValue(parts, Boolean(panel.needsAttention));
   appendSignatureValue(parts, panel.notificationText || "");
   appendSignatureValue(parts, Boolean(panel.pending));
@@ -10722,6 +10744,7 @@ function render(previousState, options = {}) {
 
   toggleClassIfChanged(elements.shell, "sidebar-collapsed", state.sidebarCollapsed);
   toggleClassIfChanged(elements.shell, "inspector-open", Boolean(state.inspectorMode));
+  toggleClassIfChanged(elements.shell, "tool-sidebar-open", ["files", "search"].includes(state.inspectorMode));
   toggleClassIfChanged(elements.shell, "pane-zoomed", Boolean(zoomedPanel));
   toggleClassIfChanged(elements.shell, "workspace-empty", panelCount === 0);
   applySettings();
@@ -11284,11 +11307,11 @@ function createWorkspaceRow() {
     if (workspace) showWorkspaceContextMenu(event, workspace);
   });
   button.addEventListener("dragover", (event) => {
-    if (!state.dragPanelId && !state.dragWorkspaceId) return;
+    if (!state.dragPanelId && !state.dragWorkspaceId && !state.dragPaneTab) return;
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
     clearWorkspaceListDropTarget();
-    if (state.dragPanelId) {
+    if (state.dragPanelId || state.dragPaneTab) {
       setWorkspaceRowDropTarget(button, "panel");
       return;
     }
@@ -11307,7 +11330,11 @@ function createWorkspaceRow() {
     const targetWorkspaceId = button.dataset.workspaceId;
     const workspacePlacement = workspaceDropPlacement(event, button);
     clearWorkspaceRowDropTarget(button);
-    if (state.dragPanelId) movePanelToWorkspace(state.dragPanelId, targetWorkspaceId);
+    if (state.dragPaneTab) {
+      const drag=state.dragPaneTab;state.dragPaneTab=null;clearAllDropTargets();
+      movePaneTabsToWorkspace(drag.panelId,targetWorkspaceId,{wholeGroup:drag.wholeGroup});
+    }
+    else if (state.dragPanelId) movePanelToWorkspace(state.dragPanelId, targetWorkspaceId);
     else if (state.dragWorkspaceId && state.dragWorkspaceId !== targetWorkspaceId) {
       moveWorkspaceRelative(state.dragWorkspaceId, targetWorkspaceId, workspacePlacement);
     }
@@ -11922,7 +11949,7 @@ function updateSurfaceTabStatesOnly(workspace, tabLabels = surfaceTabLabels(work
 
 function updateSurfaceTab(button, workspace, panel, label = surfaceTabLabel(workspace, panel)) {
   const parts = updateSurfaceTabState(button, workspace, panel, label);
-  const iconName = panel.type === "browser" ? "browser" : "terminal";
+  const iconName = ['markdown','diff'].includes(panel.type)?panel.type:panel.type === "browser" ? "browser" : "terminal";
   if (parts.kind && parts.kind.dataset.icon !== iconName) {
     parts.kind.dataset.icon = iconName;
     parts.kind.innerHTML = controlIconMarkup(iconName);
@@ -12315,6 +12342,9 @@ function paneRenderSignature(workspace, visiblePanels, tree) {
     appendSignatureValue(nextParts, panel.cwd || "");
     appendSignatureValue(nextParts, panel.cwdShort || "");
     appendSignatureValue(nextParts, panel.url || "");
+    appendSignatureValue(nextParts, panel.filePath || '');
+    appendSignatureValue(nextParts, panel.diffSource || '');
+    appendSignatureValue(nextParts, panel.diffBase || '');
     appendSignatureValue(nextParts, panel.shellProfile || "");
     appendSignatureValue(nextParts, panel.shellPath || "");
     appendSignatureValue(nextParts, terminalFontSizeForPanel(panel));
@@ -12338,6 +12368,8 @@ function paneStructureSignature(workspace, visiblePanels, tree) {
   appendSignatureArray(parts, visiblePanels, (nextParts, panel) => {
     appendSignatureValue(nextParts, panel.id);
     appendSignatureValue(nextParts, panel.type);
+    if(panel.type==='markdown'){appendSignatureValue(nextParts,panel.cwd);appendSignatureValue(nextParts,panel.filePath);}
+    if(panel.type==='diff'){appendSignatureValue(nextParts,panel.cwd);appendSignatureValue(nextParts,panel.diffSource);appendSignatureValue(nextParts,panel.diffBase);}
     appendSignatureValue(nextParts, isPendingPanel(panel));
   });
   return parts.join("");
@@ -12495,12 +12527,12 @@ function updatePaneChromeState(pane, panel, workspace) {
 
 function updatePaneTypeBadge(badge, type) {
   if (!badge) return;
-  const kind = type === "browser" ? "browser" : "terminal";
+  const kind = ['markdown','diff'].includes(type)?type:type === "browser" ? "browser" : "terminal";
   if (badge.dataset.paneTypeKind !== kind) {
     badge.innerHTML = controlIconMarkup(kind);
     badge.dataset.paneTypeKind = kind;
   }
-  const label = kind === "browser" ? "Browser pane" : "Terminal pane";
+  const label = ['markdown','diff'].includes(kind)?parityText(kind==='markdown'?'markdownPane':'diffPane'):kind === "browser" ? "Browser pane" : "Terminal pane";
   setTitleIfChanged(badge, label);
   setAttributeIfChanged(badge, "aria-label", label);
 }
@@ -12561,6 +12593,8 @@ function renderPaneNode(panel, workspace, visibleCount) {
       ensureBrowser(panel, body);
     }
   }
+  if(panel.type==='markdown')documentPanes.render(panel,parts.body);
+  if(panel.type==='diff')diffPanes.render(panel,parts.body);
   return pane;
 }
 
@@ -12731,6 +12765,7 @@ function terminalPanelSmartSurfaceTitle(panel) {
 }
 
 function panelDisplayTitle(panel, surface = false) {
+  if(panel.type==='markdown' || panel.type==='diff')return panel.title || panel.filePath || parityText(panel.type==='diff'?'diffPane':'markdownPane');
   if (isPendingPanel(panel)) return panel.title || (panel.type === "browser" ? "Opening browser" : "Starting terminal");
   if (panel.type === "browser") {
     const title = String(panel.title || "").trim();
@@ -13315,6 +13350,7 @@ function startInspectorResize(event) {
   elements.shell.classList.add("inspector-resizing");
   state.inspectorResizing = {
     pointerId: event.pointerId,
+    toolSidebar: ["files", "search"].includes(state.inspectorMode),
     startX: event.clientX,
     startWidth: rect.width,
     width: rect.width
@@ -13323,14 +13359,17 @@ function startInspectorResize(event) {
 
 function continueInspectorResize(event) {
   if (!state.inspectorResizing) return;
+  const toolSidebar = state.inspectorResizing.toolSidebar;
+  const availableWidth = window.innerWidth - elements.sidebar.getBoundingClientRect().width;
+  const maximumWidth = toolSidebar ? Math.max(295, Math.min(1200, availableWidth - 360)) : inspectorWidthMax;
   const nextWidth = Math.round(clamp(
     state.inspectorResizing.startWidth + state.inspectorResizing.startX - event.clientX,
-    inspectorWidthMin,
-    inspectorWidthMax
+    toolSidebar ? 295 : inspectorWidthMin,
+    maximumWidth
   ));
   state.inspectorResizing.width = nextWidth;
-  state.settings.inspectorWidth = nextWidth;
-  elements.shell.style.setProperty("--inspector-width", `${nextWidth}px`);
+  state.settings[toolSidebar ? "rightSidebarWidth" : "inspectorWidth"] = nextWidth;
+  elements.shell.style.setProperty(toolSidebar ? "--tool-sidebar-preferred-width" : "--inspector-width", `${nextWidth}px`);
 }
 
 function finishInspectorResize(event) {
@@ -13380,21 +13419,27 @@ function createPane(panel) {
   });
   pane.addEventListener("wheel", handlePaneWheelZoom, { passive: false, capture: true });
   pane.addEventListener("focusin", () => markInteractedPanel(pane.dataset.panelId));
-  pane.addEventListener("pointerdown", () => markInteractedPanel(pane.dataset.panelId), { capture: true });
+  pane.addEventListener("pointerdown", event => {
+    if (event.button === 1 && event.target.closest('.pane-tab')) return;
+    markInteractedPanel(pane.dataset.panelId);
+  }, { capture: true });
   const header = parts.header;
   header.draggable = false;
   header.addEventListener("click", () => {
     focusPanel(pane.dataset.panelId);
   });
   header.addEventListener("dblclick", (event) => {
-    if (event.target.closest(".pane-toolbar, .pane-tool")) return;
+    if (event.target.closest(".pane-toolbar, .pane-tool, button")) return;
+    const strip = event.target.closest(".pane-tab-strip");
+    if (strip && event.clientY >= strip.getBoundingClientRect().top + strip.clientHeight) return;
     event.preventDefault();
     event.stopPropagation();
-    const found = findPanelState(pane.dataset.panelId);
-    if (found && !isPendingPanel(found.panel)) renamePanel(found.panel);
+    const tab=event.target.closest('.pane-tab');
+    if(tab){const found=findPanelState(tab.dataset.tabPanelId);if(found && !isPendingPanel(found.panel))renamePanel(found.panel);}
+    else createTerminalTab(pane.dataset.panelId);
   });
   header.addEventListener("contextmenu", (event) => {
-    const found = findPanelState(pane.dataset.panelId);
+    const found = findPanelState(event.target.closest('.pane-tab')?.dataset.tabPanelId || pane.dataset.panelId);
     if (found) showPanelContextMenu(event, found.panel);
   });
   header.addEventListener("pointerdown", (event) => startPanePointerDrag(event, pane));
@@ -13472,6 +13517,35 @@ function transferPaneTabs(sourceId,targetId,options={}) {
   savePaneTreeLayouts(state.paneTrees);render();focusPanel(sourceId);
 }
 
+async function movePaneTabsToWorkspace(panelId,workspaceId,options={}) {
+  const source=findPanelState(panelId)?.workspace;
+  const target=state.data?.workspaces.find(workspace=>workspace.id===workspaceId);
+  if(!source || !target || source===target || state.pendingPaneTabTransfer)return;
+  // Update ownership and layout together before the runtime broadcast can render.
+  const previousGroups=structuredClone(paneTabGroups.groups);
+  const previousTrees=new Map(state.paneTrees);
+  const previousData=structuredClone(state.data);
+  const result=paneTabGroups.moveToWorkspace(paneTreeForWorkspace(source),paneTreeForWorkspace(target),source,target,panelId,options);
+  if(!result)return;
+  state.pendingPaneTabTransfer=true;
+  state.paneTrees.set(source.id,result.sourceTree);
+  state.paneTrees.set(target.id,result.targetTree);
+  for(const movingId of result.panelIds)optimisticUpdatePanel(movingId,{workspaceId,moveToEnd:true},{render:false});
+  target.activePanelId=panelId;
+  if(!source.panels.some(panel=>panel.id===source.activePanelId))source.activePanelId=paneTabGroups.visiblePanels(source)[0]?.id || null;
+  savePaneTreeLayouts(state.paneTrees);render();
+  try {
+    const response=await api('/api/panels/transfer',{method:'POST',body:JSON.stringify({panelIds:result.panelIds,workspaceId,activePanelId:panelId})});
+    if(!response?.ok)throw Error('transfer_failed');
+    if(state.data?.activeWorkspaceId===workspaceId && target.activePanelId===panelId)focusPanel(panelId);
+  } catch {
+    paneTabGroups.groups=previousGroups;paneTabGroups.save();
+    state.paneTrees=previousTrees;savePaneTreeLayouts(state.paneTrees);
+    state.data=previousData;
+    await loadState();
+  } finally {state.pendingPaneTabTransfer=false;}
+}
+
 function renderPaneTabStrip(pane, selected, workspace) {
   const content=pane.querySelector('.pane-body');
   content.id=`pane-content-${selected.id}`;
@@ -13487,7 +13561,7 @@ function renderPaneTabStrip(pane, selected, workspace) {
     const add = document.createElement('button');
     add.type = 'button';
     add.className = 'pane-tool pane-new-tab';
-    add.textContent = '+';
+    add.innerHTML = controlIconMarkup('plus');
     add.title = t('menu.newTerminal', 'New Terminal');
     add.setAttribute('aria-label', add.title);
     add.onclick = event => { event.stopPropagation(); createTerminalTab(pane.dataset.panelId); };
@@ -13508,7 +13582,7 @@ function renderPaneTabStrip(pane, selected, workspace) {
     tab.tabIndex = member.id === selected.id ? 0 : -1;
     const icon = document.createElement('span');
     icon.className = 'pane-tab-icon';
-    icon.innerHTML = controlIconMarkup(member.type === 'browser' ? 'browser' : 'terminal');
+    icon.innerHTML = controlIconMarkup(['markdown','diff'].includes(member.type)?member.type:member.type === 'browser' ? 'browser' : 'terminal');
     icon.setAttribute('aria-hidden','true');
     const label = document.createElement('span');
     label.className = 'pane-tab-label';
@@ -13522,6 +13596,15 @@ function renderPaneTabStrip(pane, selected, workspace) {
     close.setAttribute('aria-label', t('tab.close', 'Close'));
     close.onclick = event => { event.stopPropagation(); closePanel(member.id); };
     tab.onclick = event => { event.stopPropagation(); focusPanel(member.id); };
+    tab.addEventListener('mousedown', event => {
+      if (event.button === 1) event.preventDefault();
+    });
+    tab.addEventListener('auxclick', event => {
+      if (event.button !== 1) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closePanel(member.id);
+    });
     tab.draggable=true;
     tab.addEventListener('dragstart',event=>{
       if(event.target.closest('.pane-tab-close')){event.preventDefault();return;}
@@ -13766,9 +13849,12 @@ function clearAllDropTargets() {
   state.panePointerDrag = null;
   state.dragPanelId = null;
   state.dragWorkspaceId = null;
+  state.dragPaneTab = null;
 }
 
 function cleanupPanel(panelId) {
+  documentPanes.dispose(panelId);
+  diffPanes.dispose(panelId);
   if (state.zoomedPanelId === panelId) state.zoomedPanelId = null;
   if (state.focusedPanelId === panelId) state.focusedPanelId = null;
   if (state.lastInteractedPanelId === panelId) state.lastInteractedPanelId = null;
@@ -14081,6 +14167,11 @@ function ensureTerminal(panel, body) {
   host.className = "terminal-host is-connecting";
   host.dataset.connectionStatus = t("terminal.connectingShell");
   host.addEventListener("wheel", handleTerminalWheelZoom, { passive: false, capture: true });
+  host.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void pasteClipboardToTerminal(panel);
+  }, { capture: true });
   body.appendChild(host);
 
   const fontSize = terminalFontSizeForPanel(panel);
@@ -14203,7 +14294,7 @@ function requestInitialTerminalLayout(session, panelId, frame = 0) {
       return;
     }
     scheduleFitTerminal(session, true);
-    if (panelId === activeWorkspace()?.activePanelId) session.term.focus();
+    if (!inlineRename.isEditing() && panelId === activeWorkspace()?.activePanelId) session.term.focus();
   });
 }
 
@@ -16319,6 +16410,7 @@ function mergeSettingsInspectorRenderOptions(current = {}, next = {}) {
 }
 
 function renderInspector(options = {}) {
+  if(state.inspectorMode!=='search')workspaceSearch.invalidate();
   if(state.inspectorMode!=='files')workspaceFileExplorer.invalidate();
   if (!state.inspectorMode) {
     state.inspectorSignature = "";
@@ -16354,6 +16446,11 @@ function renderInspector(options = {}) {
       };
       return card;
     }));
+  } else if(state.inspectorMode==='search') {
+    state.inspectorSignature='search';
+    setTextIfChanged(elements.inspectorTitle,workspaceSearch.label);
+    setTextIfChanged(elements.inspectorSubtitle,activeWorkspace()?.cwd || '');
+    workspaceSearch.render(activeWorkspace()?.cwd || '',elements.inspectorBody);
   } else if(state.inspectorMode==='files') {
     state.inspectorSignature='files';
     setTextIfChanged(elements.inspectorTitle,workspaceFileExplorer.label);
@@ -31355,6 +31452,9 @@ function paneLayoutPresetBlueprint(preset, options = {}) {
       color: panel.color || "",
       backgroundImage: panel.backgroundImage || "",
       cwd: panel.cwd || workspace.cwd || "",
+      filePath: panel.filePath || '',
+      diffSource: panel.diffSource,
+      diffBase: panel.diffBase,
       shellProfile: panel.shellProfile || state.settings.terminalProfile,
       shellPath: panel.shellPath || "",
       terminalFontSize: panel.terminalFontSize || 0,
@@ -37791,6 +37891,9 @@ function currentWorkspaceBlueprintSnapshot(label, overrides = {}) {
       color: panel.color || "",
       backgroundImage: panel.backgroundImage || "",
       cwd: panel.cwd || workspace.cwd || "",
+      filePath: panel.filePath || '',
+      diffSource: panel.diffSource,
+      diffBase: panel.diffBase,
       shellProfile: panel.shellProfile || state.settings.terminalProfile,
       shellPath: panel.shellPath || "",
       terminalFontSize: panel.terminalFontSize || 0,
@@ -37812,6 +37915,9 @@ function workspaceBlueprintComparableModel(blueprint) {
       color: panel.color || "",
       backgroundImage: panel.backgroundImage || "",
       cwd: panel.cwd || "",
+      filePath: panel.filePath || '',
+      diffSource: panel.diffSource,
+      diffBase: panel.diffBase,
       shellProfile: panel.shellProfile || "",
       shellPath: panel.shellPath || "",
       terminalFontSize: panel.terminalFontSize || 0,
@@ -37930,6 +38036,10 @@ async function applyWorkspaceBlueprint(blueprintId, workspaceId = activeWorkspac
         color: panel.color,
         backgroundImage: panel.backgroundImage,
         cwd: panel.cwd || blueprint.cwd || workspace.cwd,
+        filePath: panel.filePath,
+        diffSource: panel.diffSource,
+        diffBase: panel.diffBase,
+        pending:!['markdown','diff'].includes(panel.type),
         shellProfile: panel.shellProfile,
         shellPath: panel.shellPath,
         terminalFontSize: panel.terminalFontSize,
@@ -38018,8 +38128,39 @@ function ensureContextMenu() {
 function hideContextMenu() {
   if (!state.contextMenu) return;
   state.contextMenu.hidden = true;
+  state.contextMenu.onkeydown = null;
+  state.contextMenu.removeAttribute("role");
   state.contextMenu.scrollTop = 0;
   state.contextMenu.replaceChildren();
+}
+
+function showWorkspaceFileContextMenu(event, actions, origin) {
+  const menu = ensureContextMenu();
+  menu.className = "context-menu";
+  menu.setAttribute("role", "menu");
+  const buttons = actions.map(action => {
+    const button = contextMenuButton(action.label, action.run);
+    button.dataset.fileMenu = action.id;
+    button.setAttribute("role", "menuitem");
+    return button;
+  });
+  menu.replaceChildren(...buttons);
+  menu.onkeydown = key => {
+    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(key.key)) {
+      key.preventDefault();key.stopPropagation();
+      const index = buttons.indexOf(document.activeElement);
+      const next = key.key === "Home" ? 0 : key.key === "End" ? buttons.length - 1
+        : (index + (key.key === "ArrowUp" ? -1 : 1) + buttons.length) % buttons.length;
+      buttons[next]?.focus();
+    } else if (key.key === "Enter" || key.key === " ") {
+      key.preventDefault();key.stopPropagation();document.activeElement?.click();
+    } else if (key.key === "Escape" || key.key === "Tab") {
+      key.preventDefault();key.stopPropagation();hideContextMenu();origin?.focus();
+    }
+  };
+  const rect = origin.getBoundingClientRect();
+  showContextMenuAt(menu, event.clientX || rect.left, event.clientY || rect.bottom);
+  buttons[0]?.focus();
 }
 
 function contextPaneSummary(panel, workspace) {
@@ -39229,28 +39370,14 @@ function showConfirmDialog({
 }
 
 async function renamePanel(panel) {
-  if (!panel) {
-    toast("Focus or create a pane first.");
-    return false;
-  }
-  const title = await showTextDialog({
-    title: "Rename tab",
-    value: panel.title || (panel.type === "browser" ? hostnameOf(panel.url) : "Terminal"),
-    placeholder: "Tab name",
-    confirmLabel: "Rename"
+  if(!panel)return false;
+  await focusPanel(panel.id);
+  await new Promise(requestAnimationFrame);
+  return inlineRename.open({key:`panel:${panel.id}`,value:panelDisplayTitle(panel,false),label:parityText('renameTabInline'),
+    findLabel:()=>document.querySelector(`[data-tab-panel-id="${CSS.escape(panel.id)}"] .pane-tab-label`),
+    exists:()=>Boolean(findPanelState(panel.id)),
+    save:async title=>{const result=await api(`/api/panels/${panel.id}`,{method:'PATCH',body:JSON.stringify({title})});if(!result?.ok)throw Error('rename_failed');await loadState();}
   });
-  if (title === null) return false;
-  if (!title) {
-    if (!panel.titleLocked) {
-      toast("Pane already uses the default name.");
-      return false;
-    }
-    await updatePanel(panel.id, { title: "" });
-    toast("Pane name reset.");
-    return true;
-  }
-  await updatePanel(panel.id, { title });
-  return true;
 }
 
 function renameActivePanel(panel = focusedPanel() || activePanel()) {
@@ -39284,6 +39411,9 @@ function splitPanelFromPaneId(panelId, direction, type = "terminal", options = {
 }
 
 function duplicatePanel(panel) {
+  if(['markdown','diff'].includes(panel.type)) {
+    splitPanel(panel,newPaneDirection(),panel.type,{cwd:panel.cwd,filePath:panel.filePath,diffSource:panel.diffSource,diffBase:panel.diffBase,title:panel.title,pending:false});return;
+  }
   if (panel.type === "browser") {
     splitPanel(panel, newPaneDirection(), "browser", {
       url: panel.url || state.settings.browserHomeUrl,
@@ -41766,15 +41896,12 @@ async function renameActiveWorkspace() {
   await renameWorkspaceById(workspace.id, workspace.title);
 }
 
-async function renameWorkspaceById(workspaceId, currentTitle = "") {
-  const title = await showTextDialog({
-    title: "Rename workspace",
-    value: currentTitle,
-    placeholder: "Workspace name",
-    confirmLabel: "Rename"
+async function renameWorkspaceById(workspaceId,currentTitle='') {
+  return inlineRename.open({key:`workspace:${workspaceId}`,value:currentTitle,label:parityText('renameWorkspaceInline'),
+    findLabel:()=>document.querySelector(`.workspace-row[data-workspace-id="${CSS.escape(workspaceId)}"] .workspace-name`),
+    exists:()=>Boolean(state.data?.workspaces.some(workspace=>workspace.id===workspaceId)),
+    save:async title=>{const result=await api(`/api/workspaces/${workspaceId}`,{method:'PATCH',body:JSON.stringify({title})});if(!result?.ok)throw Error('rename_failed');await loadState();}
   });
-  if (!title) return;
-  await renameWorkspaceTo(title, workspaceId);
 }
 
 async function renameWorkspaceTo(title, workspaceId = activeWorkspace()?.id) {
@@ -42511,6 +42638,9 @@ async function createPanel(type, direction = newPaneDirection(), options = {}) {
           shellPath: type === "terminal" && shellProfile === "custom" ? shellPath : undefined,
           terminalFontSize: type === "terminal" ? options.terminalFontSize : undefined,
           cwd: options.cwd || workspace.cwd,
+          filePath: options.filePath,
+          diffSource: options.diffSource,
+          diffBase: options.diffBase,
           url
         })
       });
@@ -42779,7 +42909,7 @@ function optimisticClosePanel(panelId, renderNow = true) {
     if (zoomedPanelId === panelId) state.zoomedPanelIds.delete(workspaceId);
   }
   found.workspace.panels = found.workspace.panels.filter((candidate) => candidate.id !== panelId);
-  found.workspace.activePanelId = found.workspace.panels[0]?.id || null;
+  if (found.workspace.activePanelId === panelId) found.workspace.activePanelId = found.workspace.panels[0]?.id || null;
   refreshWorkspaceCounts(found.workspace);
   if (renderNow) render();
   return true;
@@ -42908,6 +43038,9 @@ function closedPanelSnapshot(panelId) {
     color: found.panel.color || "",
     backgroundImage: found.panel.type === "terminal" ? found.panel.backgroundImage || "" : "",
     cwd: found.panel.cwd || found.workspace.cwd || "",
+    filePath: found.panel.filePath || '',
+    diffSource: found.panel.diffSource,
+    diffBase: found.panel.diffBase,
     shellProfile: found.panel.shellProfile || state.settings.terminalProfile,
     shellPath: found.panel.shellPath || "",
     terminalFontSize: found.panel.terminalFontSize || 0,
@@ -42942,6 +43075,10 @@ async function reopenClosedPanel() {
       color: snapshot.color,
       backgroundImage: snapshot.backgroundImage,
       cwd: snapshot.cwd || workspace.cwd,
+      filePath: snapshot.filePath,
+      diffSource: snapshot.diffSource,
+      diffBase: snapshot.diffBase,
+      pending:!['markdown','diff'].includes(snapshot.type),
       shellProfile: snapshot.shellProfile,
       shellPath: snapshot.shellPath,
       terminalFontSize: snapshot.terminalFontSize,
@@ -43190,6 +43327,8 @@ function swapPanePositions(panelId, targetPanelId) {
 
 async function movePanelToWorkspace(panelId, workspaceId) {
   if (!panelId || !workspaceId) return;
+  const sourceWorkspace=findPanelState(panelId)?.workspace;
+  if(sourceWorkspace && sourceWorkspace.id!==workspaceId)return movePaneTabsToWorkspace(panelId,workspaceId);
   const targetWorkspace = state.data?.workspaces.find((workspace) => workspace.id === workspaceId);
   removePanelFromAllPaneTrees(panelId);
   insertPanelInPaneTree(workspaceId, targetWorkspace?.activePanelId, panelId, "right");
@@ -43460,6 +43599,13 @@ function focusWorkspaceByOrdinal(ordinal) {
 }
 
 function focusTerminalSession(panelId, options = {}) {
+  if(inlineRename.isEditing())return;
+  if(findPanelState(panelId)?.panel.type==='markdown') {
+    requestAnimationFrame(()=>{if(!inlineRename.isEditing())documentPanes.focus(panelId);});return;
+  }
+  if(findPanelState(panelId)?.panel.type==='diff') {
+    requestAnimationFrame(()=>{if(!inlineRename.isEditing())diffPanes.focus(panelId);});return;
+  }
   if (!state.terminals.has(panelId)) {
     const requested = options.deferInitUntilPaint
       ? requestTerminalInitAfterPaint(panelId)
@@ -43484,7 +43630,7 @@ function focusTerminalSession(panelId, options = {}) {
     ) {
       return;
     }
-    terminal.term.focus();
+    if (!inlineRename.isEditing()) terminal.term.focus();
   });
 }
 
@@ -43734,6 +43880,37 @@ function openInspector(mode) {
 function openWorkspaceFiles() {
   state.inspectorMode='files';updateRailButtons();render();
   requestAnimationFrame(()=>workspaceFileExplorer.focus());
+}
+
+function openWorkspaceSearch() {
+  state.inspectorMode='search';updateRailButtons();render();
+  requestAnimationFrame(()=>workspaceSearch.focus());
+}
+
+async function openMarkdownDocument(root,filePath) {
+  const workspace=activeWorkspace();if(!workspace)return;
+  const existing=workspace.panels.find(panel=>panel.type==='markdown' && panel.cwd===root && panel.filePath===filePath);
+  if(existing)return focusPanel(existing.id);
+  await createPanel('markdown','right',{cwd:root,filePath,title:filePath.split(/[\\/]/).at(-1),pending:false,operation:false});
+}
+
+async function renameWorkspaceDocumentReferences(root,oldPath,newPath) {
+  moveWorkspaceFileDrafts(root,oldPath,newPath);
+  const normalize=value=>String(value || '').replaceAll('\\','/');
+  const source=normalize(oldPath),destination=normalize(newPath);
+  for(const workspace of state.data?.workspaces || [])for(const panel of workspace.panels) {
+    if(panel.type!=='markdown' || normalize(panel.cwd).toLowerCase()!==normalize(root).toLowerCase())continue;
+    const current=normalize(panel.filePath);if(current!==source && !current.startsWith(source+'/'))continue;
+    await api(`/api/panels/${panel.id}`,{method:'PATCH',body:JSON.stringify({filePath:(destination+current.slice(source.length)).replaceAll('/',newPath.includes('\\')?'\\':'/')})});
+  }
+  await loadState();
+}
+
+async function openDiffViewer() {
+  const workspace=activeWorkspace();if(!workspace)return;
+  const existing=workspace.panels.find(panel=>panel.type==='diff' && panel.cwd===workspace.cwd);
+  if(existing)return focusPanel(existing.id);
+  await createPanel('diff','right',{cwd:workspace.cwd,title:parityText('diffPane'),pending:false,operation:false});
 }
 
 function openSettingsCategory(category = "quick", options = {}) {
@@ -45810,6 +45987,12 @@ elements.topbar?.addEventListener("dblclick", handleTopbarDoubleClick);
 elements.paneGrid.addEventListener("dragover", handlePaneGridDragOver);
 elements.paneGrid.addEventListener("dragleave", handlePaneGridDragLeave);
 elements.paneGrid.addEventListener("drop", handlePaneGridDrop);
+elements.workspaceList.addEventListener('dblclick',event=>{
+  if(event.target!==elements.workspaceList || state.dragPaneTab || state.dragWorkspaceId || state.sidebarResizing)return;
+  const rect=elements.workspaceList.getBoundingClientRect();
+  if(event.clientX>=rect.right-Math.max(8,elements.workspaceList.offsetWidth-elements.workspaceList.clientWidth) || event.clientY>=rect.top+elements.workspaceList.clientHeight)return;
+  event.preventDefault();event.stopPropagation();void createWorkspace();
+});
 elements.workspaceList.addEventListener("dragover", handleWorkspaceListDragOver);
 elements.workspaceList.addEventListener("dragleave", handleWorkspaceListDragLeave);
 elements.workspaceList.addEventListener("drop", handleWorkspaceListDrop);
@@ -45932,7 +46115,7 @@ window.cmuxNative?.getAccessibilitySupport?.().then(setScreenReaderSupport);
 window.cmuxNative?.onAccessibilitySupport?.(setScreenReaderSupport);
 
 const windowsShortcuts = installWindowsShortcuts({
-  state,elements,commands,paneTabGroups,focusedPanel,activePanel,activeWorkspace,transferPaneTabs,openWorkspaceFiles,workspaceFileExplorer,
+  state,elements,commands,paneTabGroups,focusedPanel,activePanel,activeWorkspace,transferPaneTabs,openWorkspaceFiles,openWorkspaceSearch,workspaceFileExplorer,documentPanes,diffPanes,openDiffViewer,
   updatePanel,updatePanels,
   isFormEditableTarget,isPanelMinimized,focusPanel,findPanelState,render,
   paneTreeForWorkspace,replacePaneTreePanelId,removePanelFromPaneTree,savePaneTreeLayouts,
@@ -45969,6 +46152,11 @@ installBackgroundDropTarget(elements.paneGrid, {
   panelFromEvent: terminalPanelFromBackgroundDropEvent
 });
 applySettings();
+window.cmuxNative?.onBeforeClose?.(async () => {
+  if (state.focusSyncTimer) clearTimeout(state.focusSyncTimer);
+  await flushFocusSync();
+  await api('/api/session/save', { method: 'POST' });
+});
 loadState();
 loadBrowserProfiles();
 connectEvents();

@@ -2,10 +2,28 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 contextBridge.exposeInMainWorld("cmuxNative", {
   electron: true,
+  onBeforeClose(callback) {
+    ipcRenderer.on('session:flush', async () => {
+      try { await callback(); }
+      finally { ipcRenderer.send('session:flushed'); }
+    });
+  },
   platform: process.platform,
   getAccessibilitySupport:()=>ipcRenderer.invoke('accessibility:get'),
   listWorkspaceFiles:(root,relative='')=>ipcRenderer.invoke('files:list',root,relative),
+  createWorkspaceEntry:(root,parent,name,kind)=>ipcRenderer.invoke('files:create',root,parent,name,kind),
+  renameWorkspaceEntry:(root,relative,name)=>ipcRenderer.invoke('files:rename',root,relative,name),
+  duplicateWorkspaceEntry:(root,relative,format)=>ipcRenderer.invoke('files:duplicate',root,relative,format),
+  trashWorkspaceEntry:(root,relative)=>ipcRenderer.invoke('files:trash',root,relative),
+  searchWorkspaceFiles:(root,query)=>ipcRenderer.invoke('files:search',root,query),
   readWorkspaceFile:(root,relative)=>ipcRenderer.invoke('files:read',root,relative),
+  readWorkspaceImage:(root,relative)=>ipcRenderer.invoke('files:image',root,relative),
+  getDiffPreferences:()=>ipcRenderer.invoke('diff:preferences:get'),
+  setDiffPreferences:updates=>ipcRenderer.invoke('diff:preferences:set',updates),
+  onDiffPreferencesChanged(callback){ipcRenderer.on('diff:preferences-changed',(_event,preferences)=>callback(preferences));},
+  workspaceGitStatus:(root,options)=>ipcRenderer.invoke('git:status',root,options),
+  workspaceGitDiff:(root,filePath,options)=>ipcRenderer.invoke('git:diff',root,filePath,options),
+  writeWorkspaceFile:(root,relative,text,revision)=>ipcRenderer.invoke('files:write',root,relative,text,revision),
   onAccessibilitySupport(callback){ipcRenderer.on('cmux-accessibility',(_event,enabled)=>callback(enabled));},
   getShortcuts: () => ipcRenderer.invoke('shortcuts:get'),
   updateShortcut: (id,value,reset=false) => ipcRenderer.invoke('shortcuts:update',id,value,reset),

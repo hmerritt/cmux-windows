@@ -1,5 +1,5 @@
 // Verify the distributable with its packaged, in-process runtime and native PTY.
-const { spawn } = require('node:child_process');
+const { spawn, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -132,12 +132,128 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
       await delay(100);
     }
     assert(split,'Packaged Ctrl+D must create a split through the shipped shortcut module');
+    async function pointerClick(point,count=1){
+      await call('Input.dispatchMouseEvent',{type:'mouseMoved',...point});
+      for(let clickCount=1;clickCount<=count;clickCount++)for(const type of ['mousePressed','mouseReleased'])await call('Input.dispatchMouseEvent',{type,...point,button:'left',clickCount});
+      await delay(200);
+    }
+    async function tabWait(expression){for(let i=0;i<100;i++){if(await evaluate(expression))return;await delay(100);}throw Error('Packaged tabs: '+expression);}
+    const tabCount=await evaluate("document.querySelectorAll('.pane-tab').length");
+    const emptyBar=await evaluate("(()=>{const r=document.querySelector('.pane.is-active .pane-tab-strip').getBoundingClientRect();return {x:r.right-10,y:r.top+r.height/2}})()");
+    await pointerClick(emptyBar);assert.equal(await evaluate("document.querySelectorAll('.pane-tab').length"),tabCount);
+    await pointerClick(emptyBar,2);await tabWait(`document.querySelectorAll('.pane-tab').length===${tabCount+1}`);
+    const renameLabel=await evaluate("(()=>{const r=document.querySelector('.pane.is-active .pane-tab.is-selected .pane-tab-label').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()");
+    await pointerClick(renameLabel,2);await tabWait("!!document.querySelector('.inline-rename-input')");
+    await call('Input.insertText',{text:'Packaged inline tab'});
+    await call('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+    await call('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',code:'Enter',windowsVirtualKeyCode:13});
+    await tabWait("document.querySelector('.pane.is-active .pane-tab.is-selected .pane-tab-label').textContent==='Packaged inline tab' && !document.querySelector('.inline-rename-input')");
+    assert(await evaluate("getComputedStyle(document.querySelector('.pane-tab')).flexBasis==='160px' && getComputedStyle(document.querySelector('.pane.is-active .pane-tab.is-selected')).boxShadow.includes('2px')"));
+    const workspaceCount=await evaluate("document.querySelectorAll('.workspace-row').length");
+    const emptyList=await evaluate("(()=>{const r=document.getElementById('workspaceList').getBoundingClientRect();return {x:r.right-20,y:r.bottom-20}})()");
+    await pointerClick(emptyList);assert.equal(await evaluate("document.querySelectorAll('.workspace-row').length"),workspaceCount);
+    await pointerClick(emptyList,2);await tabWait(`document.querySelectorAll('.workspace-row').length===${workspaceCount+1}`);
+    assert.equal(await evaluate("document.querySelectorAll('.pane-tab').length"),1);
+    console.log('PASS packaged tab interactions: real pointer creation, inline rename, 160px width and active 2px indicator');
+    const documentRoot=path.join(profile,'documents');
+    fs.mkdirSync(documentRoot);
+    fs.writeFileSync(path.join(documentRoot,'notes.md'),'# Packaged document\n\n![Local](local.png)\n\n```mermaid\nflowchart LR\nA --> B\n```\n');
+    fs.appendFileSync(path.join(documentRoot,'notes.md'),'\n```vega-lite\n'+JSON.stringify({data:{values:[{category:'A',value:4},{category:'B',value:9}]},mark:'bar',encoding:{x:{field:'category',type:'nominal'},y:{field:'value',type:'quantitative'}}})+'\n```\n');
+    fs.copyFileSync(path.resolve(__dirname,'../src/assets/cmux.png'),path.join(documentRoot,'local.png'));
+    const git=(...args)=>execFileSync('git',['-C',documentRoot,...args],{windowsHide:true,stdio:'pipe'});
+    git('init');git('config','user.name','Test');git('config','user.email','test@example.invalid');
+    git('add','.');git('commit','-m','Packaged fixture');
+    fs.appendFileSync(path.join(documentRoot,'notes.md'),'\nPackaged change\n');
+    const documents=await api('/api/workspaces',{title:'Packaged documents',cwd:documentRoot});
+    await api('/api/panels',{workspaceId:documents.id,type:'markdown',cwd:documentRoot,filePath:'notes.md',title:'notes.md'});
+    let documentReady=false;
+    for(let i=0;i<150;i++) {
+      documentReady=await evaluate("document.querySelector('.markdown-body h1')?.textContent==='Packaged document' && document.querySelector('.markdown-body img')?.naturalWidth>0 && !!document.querySelector('.document-diagram:not(.document-vega) svg') && !!document.querySelector('.document-vega svg') && !document.querySelector('iframe[src*=document-chart-frame]')");
+      if(documentReady)break;
+      await delay(100);
+    }
+    assert(documentReady,'Packaged Markdown, scoped local images, Mermaid and sandboxed Vega assets must render');
+    await api('/api/panels',{workspaceId:documents.id,type:'diff',cwd:documentRoot,title:'Git diff'});
+    let diffReady=false;
+    for(let i=0;i<100;i++) {
+      diffReady=await evaluate("document.querySelector('.diff-patch')?.textContent.includes('+Packaged change')");
+      if(diffReady)break;
+      await delay(100);
+    }
+    assert(diffReady,'Packaged Git IPC and real diff pane must load');
+    const preferences=await evaluate("window.cmuxNative.setDiffPreferences({layout:'split',wordWrap:true,wordDiffs:true,expandUnchanged:true,diffIndicators:'classic'})");
+    assert(preferences.ok,'Packaged display preferences must save');
+    let splitReady=false;
+    for(let i=0;i<100;i++) {
+      splitReady=await evaluate("document.querySelector('.diff-pane')?.dataset.diffLayout==='split' && document.querySelector('.diff-pane')?.dataset.expandUnchanged==='true' && document.querySelector('.diff-pane')?.dataset.diffIndicators==='classic' && !!document.querySelector('.diff-split-row .diff-old-line') && document.querySelector('.diff-patch').textContent.includes('# Packaged document')");
+      if(splitReady)break;
+      await delay(100);
+    }
+    assert(splitReady,'Packaged split diff layout and line numbers must render');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(profile,'cmux','diff-viewer','preferences.json'),'utf8')).layout,'split');
+
+    git('branch','packaged-base','HEAD');
+    fs.writeFileSync(path.join(documentRoot,'branch.txt'),'packaged branch content\n');git('add','branch.txt');git('commit','-m','Packaged branch fixture');
+    git('add','notes.md');fs.appendFileSync(path.join(documentRoot,'notes.md'),'Packaged working content\n');
+    await evaluate("{const source=document.querySelector('[data-diff-source]');source.value='staged';source.dispatchEvent(new Event('change',{bubbles:true}));}");
+    let stagedReady=false;
+    for(let i=0;i<100;i++) {
+      stagedReady=await evaluate("document.querySelector('[data-diff-source]')?.value==='staged' && document.querySelector('.diff-patch')?.textContent.includes('Packaged change') && !document.querySelector('.diff-patch').textContent.includes('Packaged working content')");
+      if(stagedReady)break;await delay(100);
+    }
+    assert(stagedReady,'Packaged staged source excludes working changes');
+    await evaluate("{const source=document.querySelector('[data-diff-source]');source.value='branch';source.dispatchEvent(new Event('change',{bubbles:true}));}");
+    for(let i=0;i<100;i++){if(await evaluate("document.querySelector('[data-diff-compare]').disabled===false && document.querySelector('[data-diff-base]').hidden===false"))break;await delay(100);}
+    await evaluate("document.querySelector('[data-diff-base]').value='packaged-base';document.querySelector('[data-diff-compare]').click()");
+    await tabWait("document.querySelector('.diff-base-status').textContent.includes('packaged-base') && !!document.querySelector('[data-git-path=\"branch.txt\"]')");
+    await evaluate("document.querySelector('[data-git-path=\"branch.txt\"]').click()");
+    let branchReady=false;
+    for(let i=0;i<100;i++) {
+      branchReady=await evaluate("document.querySelector('.diff-base-status').textContent.includes('packaged-base') && !!document.querySelector('[data-git-path=\"branch.txt\"]') && document.querySelector('.diff-patch').textContent.includes('packaged branch content')");
+      if(branchReady)break;await delay(100);
+    }
+    assert(branchReady,'Packaged branch source includes committed changes from the selected merge base');
+
+    await evaluate("document.querySelector('.diff-pane').focus()");
+    await call('Input.dispatchKeyEvent',{type:'keyDown',key:'F',code:'KeyF',windowsVirtualKeyCode:70,modifiers:10});
+    await call('Input.dispatchKeyEvent',{type:'keyUp',key:'F',code:'KeyF',windowsVirtualKeyCode:70,modifiers:10});
+    let searchReady=false;
+    for(let i=0;i<100;i++) {
+      searchReady=await evaluate("document.activeElement.matches('.workspace-search-input')");
+      if(searchReady)break;
+      await delay(100);
+    }
+    assert(searchReady,'Packaged directory-search shortcut must focus its input');
+    const sidebarGeometry=await evaluate(`(()=>{const dock=document.getElementById('inspector').getBoundingClientRect();return {width:dock.width,unobscured:[...document.querySelectorAll('.pane')].every(pane=>pane.getBoundingClientRect().right<=dock.left+1)}})()`);
+    assert.equal(sidebarGeometry.width,295,'Packaged right sidebar uses the native default width');
+    assert(sidebarGeometry.unobscured,'Packaged right sidebar must reserve space for live panes');
+    await call('Input.insertText',{text:'Packaged change'});
+    let matches=false;
+    for(let i=0;i<100;i++) {
+      matches=await evaluate("document.querySelector('.workspace-search-result')?.textContent.includes('Packaged change')");
+      if(matches)break;
+      await delay(100);
+    }
+    assert(matches,'Packaged directory search must execute ripgrep and render a real match');
+    const created=await evaluate(`window.cmuxNative.createWorkspaceEntry(${JSON.stringify(documentRoot)},'','new.txt','file')`);
+    assert(created.ok,'Packaged file creation IPC must load');
+    fs.writeFileSync(path.join(documentRoot,'new.txt'),'Packaged rename content');
+    const renamed=await evaluate(`window.cmuxNative.renameWorkspaceEntry(${JSON.stringify(documentRoot)},'new.txt','renamed.txt')`);
+    assert(renamed.ok,'Packaged no-replace rename helper must execute');
+    assert.equal(fs.readFileSync(path.join(documentRoot,'renamed.txt'),'utf8'),'Packaged rename content');
+    const duplicated=await evaluate(`window.cmuxNative.duplicateWorkspaceEntry(${JSON.stringify(documentRoot)},'renamed.txt','%@ copy')`);
+    assert(duplicated.ok,'Packaged duplicate IPC must load');
+    assert.equal(fs.readFileSync(path.join(documentRoot,duplicated.path),'utf8'),'Packaged rename content');
+    const trashed=await evaluate(`window.cmuxNative.trashWorkspaceEntry(${JSON.stringify(documentRoot)},${JSON.stringify(duplicated.path)})`);
+    assert(trashed.ok,'Packaged Recycle Bin IPC must execute');
+    assert(!fs.existsSync(path.join(documentRoot,duplicated.path)));
+    assert.equal(fs.readFileSync(path.join(documentRoot,'renamed.txt'),'utf8'),'Packaged rename content');
     const screenshot=await call('Page.captureScreenshot',{format:'png'});
     fs.mkdirSync(path.resolve(__dirname,'../test-output'),{recursive:true});
     fs.writeFileSync(path.resolve(__dirname,'../test-output/packaged.png'),Buffer.from(screenshot.data,'base64'));
     await evaluate('window.cmuxNative.closeWindow()');
     await Promise.race([exited,delay(10000).then(()=>{throw new Error('Packaged app did not close');})]);
-    console.log('PASS packaged cmux.exe: native ConPTY, workspace creation, command execution, rendered output, WebGL, inline image pixels, file IPC, keyboard split, clean close');
+    console.log('PASS packaged cmux.exe: ConPTY, WebGL, inline images, file IPC, keyboard split, Markdown, local images, Mermaid, sandboxed Vega, split Git diff and saved display preferences, directory search, file creation/rename/duplicate and Recycle Bin, clean close');
   } finally {
     socket?.close();
     if(child.exitCode===null) {

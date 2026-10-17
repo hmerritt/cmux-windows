@@ -135,9 +135,9 @@ body { font-size: 13px; }
 /* Intent: tabs share the terminal's split boundary; inactive terminal processes
    keep running. Palette and 28px strip geometry follow the original Bonsplit bar. */
 .pane-tab-strip { grid-column: 1 / 3; grid-row: 1; height: 28px; min-width: 0; display: flex; overflow: auto hidden; scrollbar-width: none; }
-.pane-tab { display: flex; align-items: center; gap: 6px; flex: 0 1 190px; min-width: 64px; max-width: 230px; height: 28px; padding: 0 6px; border-right: 1px solid #383936; color: #aaa; font-size: 12px; cursor: default; }
+.pane-tab { display: flex; align-items: center; gap: 6px; flex: 0 1 160px; min-width: 64px; max-width: 230px; height: 28px; padding: 0 6px; border-right: 1px solid #383936; color: #aaa; font-size: 12px; cursor: default; }
 .pane-tab.is-selected { background: #272822; color: #ddd; box-shadow: inset 0 1px #858580; }
-.pane.is-active .pane-tab.is-selected { box-shadow: inset 0 1px #0a84ff; }
+.pane.is-active .pane-tab.is-selected { box-shadow: inset 0 2px #0a84ff; }
 .pane-tab-icon { display: grid; place-items: center; width: 14px; flex: 0 0 14px; }
 .pane-tab-icon svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; }
 .pane-tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
@@ -149,22 +149,21 @@ body { font-size: 13px; }
 .pane-tab-drag-active webview { pointer-events:none; }
 .pane-tab.is-drop-before { box-shadow: inset 2px 0 #0a84ff; }
 .pane-tab.is-drop-after { box-shadow: inset -2px 0 #0a84ff; }
-#paneGrid .pane-new-tab { font: 20px/20px var(--font-ui); }
 #paneGrid .pane-title { grid-column: 2; grid-row: 1; }
 #paneGrid .pane-toolbar { grid-column: 3; grid-row: 1; opacity: 1; pointer-events: auto; transform: none; max-inline-size: none; gap: 2px; }
 #paneGrid .pane-tool { flex: 0 0 20px; }
-.shell .pane-tool { height: 20px; width: 20px; min-width: 20px; color: #93948f; }
+.shell .pane-tool { display: grid; place-items: center; padding: 0; height: 20px; width: 20px; min-width: 20px; color: #93948f; }
 .shell .pane-tool svg { width: 13px; height: 13px; }
 .shell .pane-toolbar .font-down, .shell .pane-toolbar .font-up,
 .shell .pane-toolbar .restart, .shell .pane-toolbar .minimize { display: none; }
-.shell .pane.is-active > .pane-header { box-shadow: inset 0 1px #0a84ff; }
+.shell .pane.is-active > .pane-header { box-shadow: none; }
 .shell .pane.has-attention { outline: 2px solid #0a84ff; outline-offset: -2px; }
 .shell .terminal-host { padding: 6px; background: var(--color-pane-surface); }
 .shell .pane-body { background: var(--color-pane-surface); }
 .shell .pane-grid { background: #181916; }
 .shell .pane-splitter { flex-basis: 1px; background: #181916; }
 .shell.focus-mode .pane { grid-template-rows: minmax(0, 1fr); }
-.workspace-files-toolbar { display:flex; gap:6px; padding:8px 0; }
+.workspace-files-toolbar { display:flex; flex-wrap:wrap; gap:6px; padding:8px 0; }
 .workspace-files-toolbar button,.workspace-file-preview button { background:#ffffff0a; border:1px solid #ffffff20; color:inherit; border-radius:4px; padding:4px 8px; }
 .workspace-files-path { font:11px var(--font-ui); overflow-wrap:anywhere; color:#aaa; margin-bottom:8px; }
 .workspace-file-tree { display:flex; flex-direction:column; }
@@ -173,3 +172,30 @@ body { font-size: 13px; }
 .workspace-file-tree button:focus-visible { outline:1px solid #0a84ff; outline-offset:-1px; }
 .workspace-file-preview { display:grid; gap:8px; margin-top:12px; }
 .workspace-file-preview textarea { width:100%; min-height:300px; resize:vertical; background:#181916; color:#ddd; font:12px/1.5 var(--font-mono,monospace); border:1px solid #ffffff20; padding:8px; }
+
+/* Files and Find follow the native right-sidebar policy: 295px minimum,
+   1200px maximum and 360px reserved for terminal content where space permits.
+   Keep the preferred width when the window temporarily constrains the dock. */
+.shell.tool-sidebar-open {
+  --tool-left-width: var(--sidebar-width, 240px);
+  --tool-sidebar-width: clamp(295px, var(--tool-sidebar-preferred-width, 295px), max(295px, min(1200px, calc(100vw - var(--tool-left-width) - 360px))));
+  grid-template-columns: var(--tool-left-width) minmax(0, 1fr) var(--tool-sidebar-width);
+}
+.shell.tool-sidebar-open.sidebar-collapsed,
+.shell.tool-sidebar-open.focus-mode { --tool-left-width: 0px; }
+.shell.tool-sidebar-open .inspector {
+  position: relative;
+  inset: auto;
+  width: auto;
+  max-width: none;
+  z-index: 1;
+  box-shadow: none;
+}
+.shell.tool-sidebar-open .inspector-body { padding: 12px; }
+
+.shell .pane-header, .pane-tab-strip, .workspace-list { cursor:default; }
+.shell .sidebar:hover::after, .shell.sidebar-resizing .sidebar::after { background:transparent; }
+.inline-rename { margin:0; padding:0; }
+.inline-rename-input { display:block; box-sizing:border-box; width:100%; height:100%; min-width:0; min-height:0; margin:0; padding:0; border:0; border-radius:0; outline:1px solid #0a84ff; background:var(--color-pane-surface,#181916); line-height:inherit; }
+.inline-rename-error { display:block; padding:2px 0; font:11px/1.3 var(--font-ui); color:var(--color-text,#ddd); background:var(--color-pane-surface,#181916); }
+.inline-rename-error[hidden] { display:none; }

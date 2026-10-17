@@ -7,7 +7,12 @@ const path = require("node:path");
 const readline = require("node:readline");
 const { formatMessage, t } = require("./i18n.cjs");
 const {ShortcutConfig} = require('./shortcut-config.cjs');
-const workspaceFiles=new (require('./workspace-files.cjs').WorkspaceFiles)();
+const workspaceFiles=new (require('./workspace-files.cjs').WorkspaceFiles)({trash:target=>shell.trashItem(target)});
+const workspaceGit=new (require('./workspace-git.cjs').WorkspaceGit)();
+const diffPreferences=new (require('./diff-preferences.cjs').DiffPreferences)(process.env.CMUX_DIFF_VIEWER_PREFS_PATH || path.join(process.env.APPDATA || app.getPath('appData'),'cmux','diff-viewer','preferences.json'));
+const workspaceSearch=new (require('./workspace-search.cjs').WorkspaceSearch)();
+const workspaceSearchRequests=new Map();
+const workspaceSearchRenderers=new WeakSet();
 const {ShortcutRouter, catalog} = require('../renderer/shortcut-engine.mjs');
 const {actionAvailable, actionPriority} = require('../renderer/shortcut-scopes.mjs');
 const separateWindow = process.argv.find(value=>value.startsWith('--cmux-window-id='))?.split('=')[1];
@@ -647,6 +652,25 @@ async function createWindow() {
     }
   });
 
+  let sessionFlushed = false;
+  let sessionFlushTimer;
+  mainWindow.on('close', event => {
+    if (sessionFlushed || mainWindow.webContents.isDestroyed()) return;
+    event.preventDefault();
+    if (sessionFlushTimer) return;
+    const finish = () => {
+      clearTimeout(sessionFlushTimer);
+      ipcMain.removeListener('session:flushed', flushListener);
+      sessionFlushed = true;
+      mainWindow?.close();
+    };
+    sessionFlushTimer = setTimeout(finish, 2000);
+    const flushListener = reply => {
+      if (isTrustedIpcEvent(reply)) finish();
+    };
+    ipcMain.on('session:flushed', flushListener);
+    mainWindow.webContents.send('session:flush');
+  });
   mainWindow.once("ready-to-show", () => mainWindow.show());
   mainWindow.webContents.on("console-message", details => {
     log(`renderer console level=${details.level} ${details.sourceId}:${details.lineNumber} ${details.message}`);
@@ -711,6 +735,50 @@ if (!hasLock) {
   },null));
   ipcMain.handle('files:read',trustedIpcHandler(async(_event,root,relative)=>{
     try{return {ok:true,...await workspaceFiles.read(root,relative)};}catch(error){return {ok:false,error:error.message};}
+  },null));
+  ipcMain.handle('files:write',trustedIpcHandler(async(_event,root,relative,text,revision)=>{
+    try{return {ok:true,...await workspaceFiles.write(root,relative,text,revision)};}catch(error){return {ok:false,error:error.message};}
+  },null));
+  ipcMain.handle('files:create',trustedIpcHandler(async(_event,root,parent,name,kind)=>{
+    try{return {ok:true,...await workspaceFiles.create(root,parent,name,kind)};}catch(error){return {ok:false,error:error.message};}
+  },null));
+  ipcMain.handle('files:rename',trustedIpcHandler(async(_event,root,relative,name)=>{
+    try{return {ok:true,...await workspaceFiles.rename(root,relative,name)};}catch(error){return {ok:false,error:error.message};}
+  },null));
+  ipcMain.handle('files:duplicate',trustedIpcHandler(async(_event,root,relative,format)=>{
+    try{return {ok:true,...await workspaceFiles.duplicate(root,relative,format)};}catch(error){return {ok:false,error:error.message};}
+  },null));
+  ipcMain.handle('files:trash',trustedIpcHandler(async(_event,root,relative)=>{
+    try{return {ok:true,...await workspaceFiles.trash(root,relative)};}catch(error){return {ok:false,error:error.message};}
+  },null));
+  ipcMain.handle('files:image',trustedIpcHandler(async(_event,root,relative)=>{
+    try{return {ok:true,...await workspaceFiles.readImage(root,relative)};}catch(error){return {ok:false,error:error.message};}
+  },null));
+  ipcMain.handle('files:search',trustedIpcHandler(async(event,root,query)=>{
+    const id=event.sender.id;
+    if(!workspaceSearchRenderers.has(event.sender)) {
+      workspaceSearchRenderers.add(event.sender);
+      event.sender.once('destroyed',()=>{workspaceSearchRequests.get(id)?.abort();workspaceSearchRequests.delete(id);});
+    }
+    workspaceSearchRequests.get(id)?.abort();
+    const controller=new AbortController();workspaceSearchRequests.set(id,controller);
+    try{return {ok:true,...await workspaceSearch.search(root,query,{signal:controller.signal})};}
+    catch(error){return {ok:false,error:error.message};}
+    finally{if(workspaceSearchRequests.get(id)===controller)workspaceSearchRequests.delete(id);}
+  },null));
+  ipcMain.handle('diff:preferences:get',trustedIpcHandler(async()=>({ok:true,preferences:await diffPreferences.get()}),null));
+  ipcMain.handle('diff:preferences:set',trustedIpcHandler(async(_event,updates)=>{
+    try {
+      const preferences=await diffPreferences.merge(updates);
+      for(const window of BrowserWindow.getAllWindows())window.webContents.send('diff:preferences-changed',preferences);
+      return {ok:true,preferences};
+    }catch{return {ok:false,error:'preferences_error'};}
+  },null));
+  ipcMain.handle('git:status',trustedIpcHandler(async(_event,root,options)=>{
+    try{return {ok:true,...await workspaceGit.status(root,options)};}catch(error){return {ok:false,error:error.message};}
+  },null));
+  ipcMain.handle('git:diff',trustedIpcHandler(async(_event,root,filePath,options)=>{
+    try{return {ok:true,...await workspaceGit.diff(root,filePath,options)};}catch(error){return {ok:false,error:error.message};}
   },null));
   app.on('accessibility-support-changed',(_event,enabled)=>mainWindow?.webContents.send('cmux-accessibility',enabled));
   ipcMain.handle('shortcuts:update', trustedIpcHandler((_event,id,value,reset)=>publishShortcutSnapshot(shortcutConfig.update(id,value,reset)),null));
@@ -802,5 +870,5 @@ if (!hasLock) {
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
   });
-  app.on("before-quit", () => { shortcutConfig.close(); stopRuntime(); });
+  app.on("will-quit", () => { shortcutConfig.close(); stopRuntime(); });
 }

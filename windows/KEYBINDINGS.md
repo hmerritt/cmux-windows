@@ -66,7 +66,7 @@ these terminal defaults are separate from cmux-owned action overrides.
 
 ## Availability
 
-All 169 registry actions are listed below; 98 currently have Windows handlers.
+All 169 registry actions are listed below; 119 currently have Windows handlers.
 Unavailable actions do not intercept keys. Remaining actions require features
 absent from this port, including Cloud/team integration, workspace groups/status
 and session reopening, the full right sidebar/files/text-box UI, canvas layout,
@@ -219,8 +219,8 @@ Windows UI translation completeness.
 | Toggle Right Sidebar (`toggleFileExplorer`) | `alt+ctrl+b` |  | Available |
 | File Explorer: Open Selection (`fileExplorerOpenSelection`) | `enter` |  | Available |
 | File Explorer: Open Selection (Finder Alias) (`fileExplorerOpenSelectionFinderAlias`) | `ctrl+down` |  | Available |
-| Save File Preview (`saveFilePreview`) | `ctrl+s` |  | Requires a feature not yet ported |
-| Toggle File Editor Word Wrap (`toggleFileEditorWordWrap`) | `alt+z` |  | Requires a feature not yet ported |
+| Save File Preview (`saveFilePreview`) | `ctrl+s` |  | Available |
+| Toggle File Editor Word Wrap (`toggleFileEditorWordWrap`) | `alt+z` |  | Available |
 | Open Browser (`openBrowser`) | `shift+ctrl+l` |  | Available |
 | Focus Address Bar (`focusBrowserAddressBar`) | `ctrl+l` |  | Available |
 | Back (`browserBack`) | `ctrl+[` |  | Available |
@@ -230,11 +230,11 @@ Windows UI translation completeness.
 | Zoom In (`browserZoomIn`) | `ctrl+=` | `ctrl+shift+=` | Available |
 | Zoom Out (`browserZoomOut`) | `ctrl+-` |  | Available |
 | Actual Size (`browserZoomReset`) | `ctrl+0` |  | Available |
-| Markdown Viewer: Zoom In (`markdownZoomIn`) | `ctrl+=` |  | Requires a feature not yet ported |
-| Markdown Viewer: Zoom Out (`markdownZoomOut`) | `ctrl+-` |  | Requires a feature not yet ported |
-| Markdown Viewer: Actual Size (`markdownZoomReset`) | `ctrl+0` |  | Requires a feature not yet ported |
+| Markdown Viewer: Zoom In (`markdownZoomIn`) | `ctrl+=` |  | Available |
+| Markdown Viewer: Zoom Out (`markdownZoomOut`) | `ctrl+-` |  | Available |
+| Markdown Viewer: Actual Size (`markdownZoomReset`) | `ctrl+0` |  | Available |
 | Find… (`find`) | `ctrl+f` |  | Available |
-| Find in Directory… (`findInDirectory`) | `shift+ctrl+f` |  | Requires a feature not yet ported |
+| Find in Directory… (`findInDirectory`) | `shift+ctrl+f` |  | Available |
 | Find Next (`findNext`) | `ctrl+g` | `f3` | Available |
 | Find Previous (`findPrevious`) | `alt+ctrl+g` | `shift+f3` | Available |
 | Hide Find Bar (`hideFind`) | `alt+shift+ctrl+f` |  | Available |
@@ -244,24 +244,24 @@ Windows UI translation completeness.
 | Enter Browser Focus Mode (`toggleBrowserFocusMode`) | `alt+ctrl+enter` |  | Available |
 | Toggle Browser Design Mode (`toggleBrowserDesignMode`) | `ctrl+shift+space, alt+ctrl+d` |  | Available |
 | Toggle React Grab (`toggleReactGrab`) | `shift+ctrl+g` |  | Requires a feature not yet ported |
-| Open Diff Viewer (`openDiffViewer`) | `ctrl+shift+space, shift+ctrl+d` |  | Requires a feature not yet ported |
-| Viewers: Scroll Down (`diffViewerScrollDown`) | `j` |  | Requires a feature not yet ported |
-| Viewers: Scroll Up (`diffViewerScrollUp`) | `k` |  | Requires a feature not yet ported |
-| Viewers: Scroll Half Page Down (`diffViewerScrollHalfPageDown`) | `ctrl+d` |  | Requires a feature not yet ported |
-| Viewers: Scroll Half Page Up (`diffViewerScrollHalfPageUp`) | `ctrl+u` |  | Requires a feature not yet ported |
-| Viewers: Scroll Down (Emacs) (`diffViewerScrollDownEmacs`) | `ctrl+n` |  | Requires a feature not yet ported |
-| Viewers: Scroll Up (Emacs) (`diffViewerScrollUpEmacs`) | `ctrl+p` |  | Requires a feature not yet ported |
-| Viewers: Scroll to Bottom (`diffViewerScrollToBottom`) | `shift+g` |  | Requires a feature not yet ported |
-| Viewers: Scroll to Top (`diffViewerScrollToTop`) | `g, g` |  | Requires a feature not yet ported |
-| Diff Viewer: Open File Search (`diffViewerOpenFileSearch`) | `/` |  | Requires a feature not yet ported |
+| Open Diff Viewer (`openDiffViewer`) | `ctrl+shift+space, shift+ctrl+d` |  | Available |
+| Viewers: Scroll Down (`diffViewerScrollDown`) | `j` |  | Available |
+| Viewers: Scroll Up (`diffViewerScrollUp`) | `k` |  | Available |
+| Viewers: Scroll Half Page Down (`diffViewerScrollHalfPageDown`) | `ctrl+d` |  | Available |
+| Viewers: Scroll Half Page Up (`diffViewerScrollHalfPageUp`) | `ctrl+u` |  | Available |
+| Viewers: Scroll Down (Emacs) (`diffViewerScrollDownEmacs`) | `ctrl+n` |  | Available |
+| Viewers: Scroll Up (Emacs) (`diffViewerScrollUpEmacs`) | `ctrl+p` |  | Available |
+| Viewers: Scroll to Bottom (`diffViewerScrollToBottom`) | `shift+g` |  | Available |
+| Viewers: Scroll to Top (`diffViewerScrollToTop`) | `g, g` |  | Available |
+| Diff Viewer: Open File Search (`diffViewerOpenFileSearch`) | `/` |  | Available |
 | Simulator: Home (`simulatorHome`) | `Unbound` |  | Requires a feature not yet ported |
 | Simulator: Rotate Left (`simulatorRotateLeft`) | `Unbound` |  | Requires a feature not yet ported |
 | Simulator: Rotate Right (`simulatorRotateRight`) | `Unbound` |  | Requires a feature not yet ported |
 | Simulator: Toggle Appearance (`simulatorToggleAppearance`) | `Unbound` |  | Requires a feature not yet ported |
 | Simulator: Toggle Software Keyboard (`simulatorToggleSoftwareKeyboard`) | `Unbound` |  | Requires a feature not yet ported |
-| Diff Viewer: Next File (`diffViewerNextFile`) | `], f` |  | Requires a feature not yet ported |
-| Diff Viewer: Previous File (`diffViewerPreviousFile`) | `[, f` |  | Requires a feature not yet ported |
-| Diff Viewer: Next Hunk (`diffViewerNextHunk`) | `n` |  | Requires a feature not yet ported |
-| Diff Viewer: Previous Hunk (`diffViewerPreviousHunk`) | `p` |  | Requires a feature not yet ported |
-| Diff Viewer: Toggle Viewed (`diffViewerToggleViewed`) | `v` |  | Requires a feature not yet ported |
+| Diff Viewer: Next File (`diffViewerNextFile`) | `], f` |  | Available |
+| Diff Viewer: Previous File (`diffViewerPreviousFile`) | `[, f` |  | Available |
+| Diff Viewer: Next Hunk (`diffViewerNextHunk`) | `n` |  | Available |
+| Diff Viewer: Previous Hunk (`diffViewerPreviousHunk`) | `p` |  | Available |
+| Diff Viewer: Toggle Viewed (`diffViewerToggleViewed`) | `v` |  | Available |
 <!-- /shortcut-table -->
