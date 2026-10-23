@@ -321,6 +321,10 @@ function shortPath(rawPath) {
   return `${parts[0]}\\...\\${parts.slice(-2).join("\\")}`;
 }
 
+function terminalDirectoryTitle(cwd) {
+  return path.basename(cwd || '') || cwd || t('panel.terminal');
+}
+
 function gitCommonDir(gitDir) {
   try {
     const value = fs
@@ -457,36 +461,6 @@ function repairWorkspaceTitles(workspaces) {
     usedTitles.add(normalizedTitleKey(repairedTitle));
   }
   return workspaces;
-}
-
-function cleanTerminalTitleSegment(segment) {
-  const raw = String(segment || "").trim();
-  if (!raw) return "";
-  const basename = path.basename(raw).replace(/\.exe$/i, "");
-  const lower = raw.toLowerCase();
-  if (
-    /^pws?h$/i.test(basename) ||
-    /^powershell$/i.test(basename) ||
-    lower.includes("\\microsoft.powershell_")
-  ) {
-    return "PowerShell";
-  }
-  if (/^cmd$/i.test(basename)) return "Command Prompt";
-  if (/^[a-z]:[\\/]/i.test(raw) || raw.includes("\\") || raw.includes("/")) {
-    return basename || raw;
-  }
-  return raw;
-}
-
-function cleanTerminalTitle(rawTitle) {
-  const title = String(rawTitle || "").replace(/\s+/g, " ").trim();
-  if (!title) return "";
-  const firstSegment = title.split(/\s+·\s+/)[0];
-  const cleanedFirstSegment = cleanTerminalTitleSegment(firstSegment);
-  if (cleanedFirstSegment && cleanedFirstSegment !== firstSegment) {
-    return cleanedFirstSegment.slice(0, 80);
-  }
-  return title.slice(0, 80);
 }
 
 function tokensMatch(expected, actual) {
@@ -667,20 +641,13 @@ class TerminalProcess {
       const cwd = sanitizeDirectoryPath(reported, "");
       if (cwd && cwd !== this.panel.cwd) {
         this.panel.cwd = cwd;
+        if (!this.panel.titleLocked) this.panel.title = terminalDirectoryTitle(cwd);
         const workspace = this.panel.runtime.findPanel(this.panel.id)?.workspace;
         if (workspace?.activePanelId === this.panel.id) workspace.cwd = cwd;
         this.panel.runtime.scheduleTerminalMetadataBroadcast();
       }
     }
     this.backlog = (this.backlog + data).slice(-200000);
-    const titleMatch = data.match(/\x1b\]0;([^\x07\x1b]+)\x07/);
-    if (titleMatch?.[1] && !this.panel.titleLocked) {
-      const nextTitle = cleanTerminalTitle(titleMatch[1]);
-      if (nextTitle && this.panel.title !== nextTitle) {
-        this.panel.title = nextTitle;
-        this.panel.runtime.scheduleTerminalMetadataBroadcast();
-      }
-    }
     if (terminalOutputNeedsAttention(data)) {
       const notificationText = data.replace(/\s+/g, " ").trim().slice(0, 160);
       if (!this.panel.needsAttention || this.panel.notificationText !== notificationText) {
@@ -768,6 +735,8 @@ class CmuxWindowsRuntime {
           panels: Array.isArray(workspace.panels) && workspace.panels.length > 0
             ? workspace.panels.map((panel) => ({
               ...panel,
+              title: panel.type === 'terminal' && !panel.titleLocked
+                ? terminalDirectoryTitle(sanitizeDirectoryPath(panel.cwd || workspace.cwd)) : panel.title,
               titleLocked: Boolean(panel.titleLocked),
               color: panel.color || "",
               backgroundImage: panel.type === "terminal" ? sanitizeBackgroundImageValue(panel.backgroundImage) : "",
@@ -862,9 +831,10 @@ class CmuxWindowsRuntime {
   }
 
   newPanel(type, workspaceId, options = {}) {
-    const defaultTitle = type === "browser" ? t("panel.browser") : t("panel.terminal");
+    const defaultTitle = type === 'terminal' ? terminalDirectoryTitle(sanitizeDirectoryPath(options.cwd))
+      : type === "browser" ? t("panel.browser") : t("panel.terminal");
     const explicitTitle = String(options.title || "").trim();
-    const title = String(explicitTitle || defaultTitle).trim().slice(0, 80) || defaultTitle;
+    const title = explicitTitle ? explicitTitle.slice(0, 80) : defaultTitle;
     const panel = {
       id: id(type === "browser" ? "browser" : "surface"),
       workspaceId,
@@ -916,7 +886,8 @@ class CmuxWindowsRuntime {
         latestNotification = panel.notificationText || "";
       }
     }
-    const cwd = workspace.cwd || firstTerminalCwd || defaultWorkspaceDirectory();
+    const activePanel = panels.find(panel => panel.id === workspace.activePanelId);
+    const cwd = activePanel?.cwd || workspace.cwd || firstTerminalCwd || defaultWorkspaceDirectory();
     const branch = gitBranch(cwd);
     return {
       id: workspace.id,
@@ -1153,7 +1124,8 @@ class CmuxWindowsRuntime {
         found.panel.title = title.slice(0, 80);
         found.panel.titleLocked = true;
       } else {
-        found.panel.title = found.panel.type === "browser" ? "Browser" : "Terminal";
+        found.panel.title = found.panel.type === 'terminal' ? terminalDirectoryTitle(found.panel.cwd)
+          : found.panel.type === "browser" ? "Browser" : "Terminal";
         found.panel.titleLocked = false;
       }
     }
@@ -1188,7 +1160,7 @@ class CmuxWindowsRuntime {
     if (!found || found.panel.type !== "terminal") return false;
     this.terminals.get(found.panel.id)?.close();
     this.terminals.delete(found.panel.id);
-    if (!found.panel.titleLocked) found.panel.title = "Terminal";
+    if (!found.panel.titleLocked) found.panel.title = terminalDirectoryTitle(found.panel.cwd);
     found.panel.needsAttention = false;
     found.panel.notificationText = "";
     this.persistAndBroadcast();

@@ -10729,7 +10729,7 @@ function render(previousState, options = {}) {
   const operationLabel = currentUiOperationLabel();
   const workspaceTitle = workspaceDisplayTitle(workspace);
   const workspaceSubheading = workspace
-    ? (isAppHomeWorkspace(workspace) ? "home" : `${workspace.cwdShort || "no directory"}`)
+    ? (isAppHomeWorkspace(workspace) ? "home" : workspaceDisplayDirectory(workspace).cwdShort || "no directory")
     : "Ready";
 
   setTextIfChanged(elements.workspaceHeading, workspaceTitle);
@@ -11226,8 +11226,8 @@ function workspaceListContentSignature() {
     const attentionTotal = workspace.panels.filter((panel) => panel.needsAttention).length;
     appendSignatureValue(nextParts, workspace.id);
     appendSignatureValue(nextParts, workspace.title || `Workspace ${index + 1}`);
-    appendSignatureValue(nextParts, workspace.cwd || "");
-    appendSignatureValue(nextParts, workspace.cwdShort || "~");
+    appendSignatureValue(nextParts, workspaceDisplayDirectory(workspace).cwd);
+    appendSignatureValue(nextParts, workspaceDisplayDirectory(workspace).cwdShort);
     appendSignatureValue(nextParts, workspace.branch || "");
     appendSignatureValue(nextParts, workspace.color || paletteColor);
     appendSignatureValue(nextParts, workspace.terminalCount || 0);
@@ -11443,13 +11443,21 @@ function workspaceDropPlacement(event, row) {
   return y < 0.5 ? "before" : "after";
 }
 
+function workspaceDisplayDirectory(workspace) {
+  const panel = workspace.panels.find(panel => panel.id === workspace.activePanelId);
+  return panel?.cwd
+    ? {cwd: panel.cwd, cwdShort: panel.cwdShort || shortFolderPath(panel.cwd)}
+    : {cwd: workspace.cwd || '', cwdShort: workspace.cwdShort || '~'};
+}
+
 function updateWorkspaceRow(button, workspace, index, activeId) {
   const hasAttention = workspace.panels.some((panel) => panel.needsAttention);
   const attentionTotal = workspace.panels.filter((panel) => panel.needsAttention).length;
   const title = workspaceDisplayTitle(workspace, `Workspace ${index + 1}`);
   const isHome = isAppHomeWorkspace(workspace);
-  const cwd = isHome ? "home" : workspace.cwdShort || "~";
-  const fullCwd = isHome ? "cmux home" : workspace.cwd || cwd;
+  const directory = workspaceDisplayDirectory(workspace);
+  const cwd = isHome ? "home" : directory.cwdShort;
+  const fullCwd = isHome ? "cmux home" : directory.cwd || cwd;
   const branch = String(workspace.branch || "").trim();
   const branchVisible = sidebarBranchVisible(workspace, activeId);
   const paneSummary = `${workspace.terminalCount || 0} terminal${workspace.terminalCount === 1 ? "" : "s"} / ${workspace.browserCount || 0} browser${workspace.browserCount === 1 ? "" : "s"}`;
@@ -11927,7 +11935,7 @@ function updateSurfaceTabState(button, workspace, panel, label = surfaceTabLabel
   setDatasetIfChanged(button, "panelId", panel.id);
   setClassNameIfChanged(button, `surface-tab${active ? " is-active" : ""}${isPanelZoomed(panel, workspace) ? " is-zoomed" : ""}${minimized ? " is-minimized" : ""}${pending ? " is-pending" : ""}${panel.needsAttention ? " has-attention" : ""}`);
   const closeActionLabel = pending ? "cancel" : closePaneActionLabel(workspace, panel.id).toLowerCase();
-  setTitleIfChanged(button, `${label}${label !== fullTitle ? ` - ${fullTitle}` : ""}${pending ? " - starting" : ""}${minimized ? " - minimized, click to restore" : ""} - middle-click to ${closeActionLabel}, double-click to rename, right-click for pane options`);
+  setTitleIfChanged(button, `${label}${label !== fullTitle ? ` - ${fullTitle}` : ""}${panel.type === 'terminal' && panel.cwd ? ` - ${panel.cwd}` : ''}${pending ? " - starting" : ""}${minimized ? " - minimized, click to restore" : ""} - middle-click to ${closeActionLabel}, double-click to rename, right-click for pane options`);
   if (active) setAttributeIfChanged(button, "aria-current", "page");
   else if (button.hasAttribute("aria-current")) button.removeAttribute("aria-current");
   setAttributeIfChanged(button, "aria-label", `${label}${active ? ", active" : ""}${pending ? ", starting" : ""}${minimized ? ", minimized" : ""}. Press Delete to ${closeActionLabel}.`);
@@ -12714,7 +12722,7 @@ function getPaneSplitNode(splitNode) {
 }
 
 function terminalPanelTitle(panel) {
-  const name = panel.title || "Terminal";
+  const name = terminalPanelAutomaticTitle(panel);
   const cwd = panel.cwdShort || "~";
   return name === cwd ? name : `${name} · ${cwd}`;
 }
@@ -12759,9 +12767,14 @@ function terminalPanelFolder(panel) {
 }
 
 function terminalPanelSmartSurfaceTitle(panel) {
-  const title = String(panel?.title || "").trim();
-  if (title && (panel.titleLocked || title.toLowerCase() !== "terminal")) return title;
-  return terminalPanelFolder(panel);
+  return terminalPanelAutomaticTitle(panel);
+}
+
+function terminalPanelAutomaticTitle(panel) {
+  if (panel.titleLocked && panel.title) return panel.title;
+  const cwd = panel.cwd || '';
+  if (/^[a-z]:[\\/]+$/i.test(cwd)) return cwd;
+  return cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || cwd || panel.title || 'Terminal';
 }
 
 function panelDisplayTitle(panel, surface = false) {
@@ -12773,8 +12786,8 @@ function panelDisplayTitle(panel, surface = false) {
     if (state.settings.titleDetailMode === "detailed" && !surface) return panel.url || "Browser";
     return hostnameOf(panel.url);
   }
-  if (state.settings.titleDetailMode === "compact") return panel.title || "Terminal";
-  if (state.settings.titleDetailMode === "folder") return terminalPanelFolder(panel);
+  if (state.settings.titleDetailMode === "compact") return terminalPanelAutomaticTitle(panel);
+  if (state.settings.titleDetailMode === "folder") return panel.titleLocked ? panel.title : terminalPanelFolder(panel);
   if (state.settings.titleDetailMode === "detailed") return terminalPanelTitle(panel);
   return surface ? terminalPanelSmartSurfaceTitle(panel) : terminalPanelTitle(panel);
 }
@@ -13587,7 +13600,7 @@ function renderPaneTabStrip(pane, selected, workspace) {
     const label = document.createElement('span');
     label.className = 'pane-tab-label';
     label.textContent = panelDisplayTitle(member,false);
-    tab.title = label.textContent;
+    tab.title = member.type === 'terminal' && member.cwd ? `${label.textContent} - ${member.cwd}` : label.textContent;
     tab.setAttribute('aria-label', label.textContent);
     const close = document.createElement('button');
     close.type = 'button';
@@ -42947,8 +42960,9 @@ function optimisticUpdatePanel(panelId, updates = {}, options = {}) {
       found.panel.title = title.slice(0, 80);
       found.panel.titleLocked = true;
     } else {
-      found.panel.title = found.panel.type === "browser" ? "Browser" : "Terminal";
       found.panel.titleLocked = false;
+      found.panel.title = found.panel.type === 'terminal' ? terminalPanelAutomaticTitle(found.panel)
+        : found.panel.type === "browser" ? "Browser" : "Terminal";
     }
   }
   if (Object.hasOwn(updates, "color")) {

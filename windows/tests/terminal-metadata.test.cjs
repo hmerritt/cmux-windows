@@ -7,14 +7,21 @@ const {pathToFileURL} = require('node:url');
 process.env.CMUX_WINDOWS_DISABLE_PTY = '1';
 const {createCmuxWindowsRuntime} = require('../src/server.cjs');
 
-function fixture(run) {
+async function fixture(run) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cmux-terminal-metadata-'));
   const runtime = createCmuxWindowsRuntime({dataDir});
   const first = path.join(dataDir, 'first folder Ω');
   const second = path.join(dataDir, 'second');
   fs.mkdirSync(first); fs.mkdirSync(second);
-  try { run(runtime, {dataDir, first, second}); }
-  finally { runtime.close(); fs.rmSync(dataDir, {recursive:true, force:true}); }
+  try { await run(runtime, {dataDir, first, second}); }
+  finally {
+    const exits = [...runtime.terminals.values()].map(terminal => terminal.child)
+      .filter(child => child && child.exitCode === null && child.signalCode === null)
+      .map(child => new Promise(resolve => child.once('exit', resolve)));
+    runtime.close();
+    await Promise.all(exits);
+    await fs.promises.rm(dataDir, {recursive:true, force:true, maxRetries:10, retryDelay:100});
+  }
 }
 
 test('workspace path follows focus, close, transfer, nonterminal tabs and fallback', () => fixture((runtime, {first, second}) => {
