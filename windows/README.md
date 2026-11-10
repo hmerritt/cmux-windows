@@ -39,23 +39,60 @@ macOS-focused.
 
 ## CLI
 
-With the app running, run these commands from a cmux terminal pane so the
-panel-scoped authentication environment is already present. For automation
-outside a pane, provide the app launch token through `CMUX_WINDOWS_TOKEN`.
+The desktop app adds `cmux` to the PATH of its local terminal panes. These panes
+have a credential for their own surface. A trusted local controller can also
+use `npm run cli --` with the app launch token in `CMUX_WINDOWS_TOKEN`.
 
 ```powershell
-npm run cli -- ping
-npm run cli -- list-workspaces
-npm run cli -- reset-session
-npm run cli -- new-workspace "API"
-npm run cli -- new-terminal
-npm run cli -- restart-terminal
-npm run cli -- browser-open https://example.com
-npm run cli -- notify "Build finished"
-npm run cli -- send "echo hello from cmux"
+cmux ping
+cmux send "echo hello from cmux"
+cmux hooks setup codex
+cmux hooks setup claude
+cmux ssh build-box -p 2222 -i "$HOME\.ssh\build_key" --name "Build"
 ```
 
 The runtime listens on `\\.\pipe\cmux-windows` on Windows and falls back to a temp Unix socket on other platforms.
+
+### Browser automation
+
+Choose **Enable Browser Automation** in a workspace’s context menu to allow its
+local terminal panes to automate browsers in that workspace. Both positional
+surface references and `--surface` are supported. Use the reference printed by
+`open`, `open-split` or `identify`.
+
+```powershell
+cmux browser open https://example.com
+cmux browser identify
+cmux browser surface:1 url
+cmux browser --surface surface:1 wait --load-state complete
+cmux browser surface:1 snapshot --interactive --compact
+cmux browser surface:1 fill "#email" --text "me@example.com"
+cmux browser surface:1 screenshot --out "$env:TEMP\cmux-page.png"
+```
+
+The Windows command set is `identify`, `open`, `open-split`, `navigate`, `back`,
+`forward`, `reload`, `url`, `wait`, `snapshot`, `click`, `fill`, `type`, `press`,
+`screenshot` and `eval`. Snapshot element references expire on navigation.
+`browser-open` remains available to trusted local controllers.
+
+### Workspace workflows
+
+- Open another desktop window, then drag a workspace to its sidebar or choose
+  **Move to Window** from the workspace menu. Running terminals and the current
+  page stay live across the move.
+- The session snapshot stores window and split layout, focus, directories, plain
+  terminal history, and browser navigation history. **Recover Older Windows**
+  imports selected detached profiles. Enable **Resume Agent Sessions on Reopen**
+  in Terminal settings after installing the corresponding agent hooks. For
+  Codex, review and trust the installed hooks using its hook trust prompt.
+  Automatic resume starts from the PowerShell and Command Prompt profiles.
+- Use `cmux ssh` or **Open SSH Workspace** for Linux x64 or ARM64 hosts. OpenSSH
+  uses your SSH config, agent and known-host keys. Establish trust for a new host
+  with OpenSSH first. **Disconnect** keeps remote PTYs available for
+  **Reconnect**, and browser traffic waits for the tunnel to be available again.
+- Use **Add comment** on a changed line in a Git diff. In a local Codex or Claude
+  Code pane with cmux hooks enabled, select the pending comments chip to
+  preview and send the workspace’s comments.
 
 ## Scope
 
@@ -64,8 +101,8 @@ Implemented in this milestone:
 - Git diffs support split/unified layouts with old/new line numbers, persisted word wrap, word-level highlights, change-background and indicator controls, and bounded expanded context. Display preferences share the native JSON schema; `CMUX_DIFF_VIEWER_PREFS_PATH` overrides the file location.
 - Workspace file tools create, rename and duplicate files/folders, and move entries to the Windows Recycle Bin. Toolbar and accessible context-menu actions share the same serialized backend.
 - Windows desktop shell with workspace sidebar, surface tabs, split panes, and command palette for commands, workspaces, panes, and Settings categories.
-- Terminal panes backed by Windows ConPTY, using node-pty's bundled ConPTY DLL. Settings > Terminal offers an optional WebGL renderer; SIXEL and iTerm inline images are supported.
-- Browser panes through Electron `webview`, with iframe fallback outside Electron.
+- Terminal panes backed by the Windows ConPTY API via node-pty. Settings > Terminal offers an optional WebGL renderer. SIXEL and iTerm inline images are supported.
+- Browser panes hosted by the Electron main process using `WebContentsView`, with an iframe fallback outside Electron.
 - Named-pipe CLI/control protocol.
 - Native Windows window controls, draggable split dividers, terminal font-size controls, restart, and close-to-empty workspace home state.
 - Settings panel split into Quick, Workspace, Look, Browser, Layout, Terminal, and Data pages, with tokenized cross-page search, one-click setup presets, expanded themes/accent palettes, custom accent/workspace colors, workspace names/colors, terminal background/text/cursor colors, built-in/URL/local-file backgrounds, browser home page, import/export/reset, density, compact/standard/expanded toolbar modes, sidebar width, tabs/status bar visibility, performance mode, terminal font family, text size, line height, padding, cursor style/blink, default shell profile, and terminal scrollback.
@@ -75,7 +112,7 @@ Implemented in this milestone:
 - New file, New folder and Rename actions preserve existing destinations. File/folder renames move drafts and retarget open Markdown panes, including case-only renames. Windows-invalid names and mutations through outside-workspace junctions are rejected.
 - Find in Directory (Ctrl+Shift+F) searches workspace content with literal smart-case queries, ignore rules and cancellable ripgrep processes. Results open at the matching line in the shared editor. Requires `rg` on PATH. Save and Word Wrap (Alt+Z) support live shortcut overrides; wrapping persists across editor openings.
 - Markdown panes with live Preview/Text modes, shared editing, tables, syntax highlighting, Mermaid, scoped local images, find and zoom. Open them from the file browser.
-- Read-only Git diff panes with staged/working changes, file and hunk navigation, search and persistent viewed marks. Open Git diff from the command palette or keyboard shortcut settings.
+- Git diff panes with staged, working and branch changes, file and hunk navigation, search, persistent viewed marks and inline comments. Open Git diff from the command palette or keyboard shortcut settings.
 - Named accessible tabs, focus containment for dialogs and the palette, and terminal screen-reader support that follows the OS accessibility setting.
 - Browser panes with address/search normalization, back/forward/reload/home controls, open-external fallback, and configurable home page.
 - Workspace right-click menus for focus, rename, color, new terminal/browser, new workspace, and close actions.
@@ -105,6 +142,8 @@ npm ci
 npm run build:renderer
 npm test
 npm run test:shortcuts
+npm run test:workflows
+npm run test:workflows -- --force-device-scale-factor=1.5
 npm run test:parity
 npm run test:tabs
 npm run test:documents

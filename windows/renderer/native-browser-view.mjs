@@ -29,7 +29,7 @@ export function createNativeBrowserView(panelId, userAgent) {
     native.onBrowserSurfaceEvent((id, name, data) => views.get(id)?.dispatchBrowserEvent(name, data));
     observer = new ResizeObserver(refreshBounds);
     const overlays = new MutationObserver(refreshBounds);
-    overlays.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden"] });
+    overlays.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden", "aria-hidden", "open"] });
     window.addEventListener("resize", refreshBounds);
     document.addEventListener("scroll", refreshBounds, true);
   }
@@ -66,7 +66,11 @@ export function createNativeBrowserView(panelId, userAgent) {
     const y = Math.max(0, Math.round(rect.top));
     const width = Math.min(innerWidth, Math.round(rect.right)) - x;
     const height = Math.min(innerHeight, Math.round(rect.bottom)) - y;
-    const onTop = width > 0 && height > 0 && document.elementFromPoint(x + width / 2, y + height / 2) === view;
+    const overlay = [...document.querySelectorAll('.context-menu:not([hidden]), #palette[aria-hidden="false"], .dialog-backdrop, dialog[open]')].some(element => {
+      const bounds = element.getBoundingClientRect();
+      return rect.left < bounds.right && rect.right > bounds.left && rect.top < bounds.bottom && rect.bottom > bounds.top;
+    });
+    const onTop = !overlay && width > 0 && height > 0 && document.elementFromPoint(x + width / 2, y + height / 2) === view;
     const bounds = onTop ? { x, y, width, height } : null;
     const signature = JSON.stringify(bounds);
     if (signature !== geometry) {

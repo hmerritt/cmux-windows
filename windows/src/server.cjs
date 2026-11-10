@@ -12,6 +12,7 @@ const { browserCommands } = require("./browser-cli.cjs");
 const { agentSession, atomicJson, plainScrollback, resumeScript } = require("./session-restore.cjs");
 const { DiffComments, reviewAnchor } = require("./diff-comments.cjs");
 const { WorkspaceGit } = require("./workspace-git.cjs");
+const { agentProcess, agentProcessIsLive } = require("./agent-process.cjs");
 const {TerminalDirectoryReports, directoryReportingShellArgs} = require("./terminal-directory.cjs");
 
 let pty = null;
@@ -591,6 +592,7 @@ class TerminalProcess {
     const resume = this.panel.pendingResume;
     delete this.panel.pendingResume;
     const shellArgs = directoryReportingShellArgs(shellPath, resumeScript(resume));
+    if (resume && !shellArgs.length) this.emitOutput("[cmux could not resume the agent in this shell profile.]\r\n");
     const cwd = this.panel.cwd && fs.existsSync(this.panel.cwd)
       ? this.panel.cwd
       : os.homedir();
@@ -599,7 +601,6 @@ class TerminalProcess {
         name: "xterm-256color",
         cols: this.cols,
         rows: this.rows,
-        useConptyDll: process.platform === "win32",
         cwd,
         env: terminalProcessEnv(this.panel, this.panelToken, {
           TERM: "xterm-256color",
@@ -669,6 +670,7 @@ class TerminalProcess {
       }
     }
     this.backlog = (this.backlog + data).slice(-200000);
+    this.panel.runtime.schedulePersistSession(1500);
     if (terminalOutputNeedsAttention(data)) {
       const notificationText = data.replace(/\s+/g, " ").trim().slice(0, 160);
       if (!this.panel.needsAttention || this.panel.notificationText !== notificationText) {
@@ -821,7 +823,12 @@ class CmuxWindowsRuntime {
   restoreWindowOwners(saved, workspaces, activeWorkspaceId) {
     const windows = Array.isArray(saved) ? saved.filter(window =>
       typeof window?.id === "string" && /^window_[a-z0-9-]+$/i.test(window.id)
-    ).map(({ id, activeWorkspaceId }) => ({ id, activeWorkspaceId })) : [];
+    ).map(({ id, activeWorkspaceId, bounds, maximized }) => ({
+      id, activeWorkspaceId,
+      bounds: bounds && [bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isInteger) &&
+        bounds.width >= 480 && bounds.height >= 400 ? bounds : undefined,
+      maximized: maximized === true
+    })) : [];
     if (!windows.length) windows.push({ id: id("window"), activeWorkspaceId });
     const ids = new Set(windows.map(window => window.id));
     for (const workspace of workspaces) {
@@ -840,6 +847,14 @@ class CmuxWindowsRuntime {
     this.windowTokens.set(windowId, crypto.randomBytes(32).toString("base64url"));
   }
 
+  saveWindowGeometry(windowId, bounds, maximized) {
+    const window = this.state.windows.find(item => item.id === windowId);
+    if (!window || this.closed) return;
+    window.bounds = bounds;
+    window.maximized = maximized;
+    this.schedulePersistSession();
+  }
+
   rendererWindow(windowId = this.state.windows[0].id) {
     const window = this.state.windows.find(item => item.id === windowId);
     return window && { ...window, token: this.windowTokens.get(windowId) };
@@ -855,32 +870,45 @@ class CmuxWindowsRuntime {
 
   recoverableWindows() {
     const recovered = new Set(this.state.recoveredWindows);
-    return fs.readdirSync(this.dataDir, { withFileTypes: true, throwIfNoEntry: false })
+    if (!fs.existsSync(this.dataDir)) return [];
+    return fs.readdirSync(this.dataDir, { withFileTypes: true })
       .filter(entry => entry.isDirectory() && /^[a-f0-9-]{36}$/i.test(entry.name) && !recovered.has(entry.name))
       .map(entry => ({ id: entry.name, state: this.loadSession(path.join(this.dataDir, entry.name, "session.json")) }))
       .filter(entry => entry.state?.workspaces.length)
-      .map(({ id, state }) => ({ id, title: state.workspaces[0].title, count: state.workspaces.length }));
+      .map(({ id, state }) => ({ id, title: state.workspaces[0].title, count: state.workspaces.length, port: state.rendererPort }));
   }
 
-  recoverWindow(profileId) {
+  recoverWindow(profileId, legacyLayouts = {}) {
     if (!this.recoverableWindows().some(candidate => candidate.id === profileId)) return null;
     const legacy = this.loadSession(path.join(this.dataDir, profileId, "session.json"));
     if (!legacy) return null;
     const window = { id: id("window"), activeWorkspaceId: null };
+    const workspaceIds = new Set(this.state.workspaces.map(workspace => workspace.id));
+    const panelIds = new Set(this.state.workspaces.flatMap(workspace => workspace.panels.map(panel => panel.id)));
     for (const workspace of legacy.workspaces) {
-      const previousActive = workspace.activePanelId;
+      const previousId = workspace.id;
       const wasActive = legacy.activeWorkspaceId === workspace.id;
-      workspace.id = id("workspace");
+      if (workspaceIds.has(workspace.id)) workspace.id = id("workspace");
+      workspaceIds.add(workspace.id);
       workspace.windowId = window.id;
-      delete workspace.layout;
+      const remap = new Map();
+      const layout = workspace.layout || {
+        tree: legacyLayouts.trees?.[previousId],
+        groups: legacyLayouts.groups?.filter(group => group?.workspaceId === previousId),
+        browserTabs: Object.fromEntries(workspace.panels.filter(panel => panel.type === "browser" && legacyLayouts.browserTabs?.[panel.id])
+          .map(panel => [panel.id, legacyLayouts.browserTabs[panel.id]]))
+      };
       for (const panel of workspace.panels) {
-        const active = panel.id === previousActive;
-        panel.id = id(panel.type === "browser" ? "browser" : "surface");
+        const previousPanelId = panel.id;
+        if (panelIds.has(panel.id)) panel.id = id(panel.type === "browser" ? "browser" : "surface");
+        panelIds.add(panel.id);
+        remap.set(previousPanelId, panel.id);
         panel.workspaceId = workspace.id;
         delete panel.pendingResume;
-        delete panel.agentSession;
-        if (active) workspace.activePanelId = panel.id;
       }
+      workspace.activePanelId = remap.get(workspace.activePanelId) || workspace.panels[0]?.id || null;
+      workspace.layout = this.normalizeWorkspaceLayout(workspace, layout, remap);
+      if (workspace.remote) this.registerSshWorkspace(workspace);
       if (wasActive || !window.activeWorkspaceId) window.activeWorkspaceId = workspace.id;
     }
     this.state.workspaces.push(...legacy.workspaces);
@@ -889,6 +917,47 @@ class CmuxWindowsRuntime {
     this.registerRendererWindow(window.id);
     this.persistAndBroadcast();
     return this.rendererWindow(window.id);
+  }
+
+  normalizeWorkspaceLayout(workspace, layout, remap = new Map(workspace.panels.map(panel => [panel.id, panel.id]))) {
+    const used = new Set();
+    const tree = (node, depth = 0) => {
+      if (!node || depth > 128) return null;
+      if (node.type === "pane") {
+        const panelId = remap.get(node.panelId);
+        if (!panelId || used.has(panelId)) return null;
+        used.add(panelId);
+        return { type: "pane", panelId };
+      }
+      if (node.type !== "split") return null;
+      const first = tree(node.first, depth + 1);
+      const second = tree(node.second, depth + 1);
+      if (!first || !second) return first || second;
+      return {
+        type: "split", id: /^[a-z0-9_-]{1,100}$/i.test(node.id || "") ? node.id : id("split"),
+        direction: node.direction === "down" ? "down" : "right",
+        ratio: Math.max(0.01, Math.min(0.99, Number(node.ratio) || 0.5)), first, second
+      };
+    };
+    const grouped = new Set();
+    const groups = [];
+    for (const group of Array.isArray(layout.groups) ? layout.groups : []) {
+      if (!Array.isArray(group?.members)) continue;
+      const members = [...new Set(group.members.map(member => remap.get(member)))].filter(member => member && !grouped.has(member));
+      if (members.length < 2) continue;
+      members.forEach(member => grouped.add(member));
+      const active = remap.get(group.active);
+      groups.push({ workspaceId: workspace.id, members, active: members.includes(active) ? active : members[0] });
+    }
+    const browserTabs = Object.fromEntries(Object.entries(layout.browserTabs || {}).flatMap(([oldId, snapshot]) => {
+      const panel = workspace.panels.find(item => item.id === remap.get(oldId) && item.type === "browser");
+      if (!panel || !Array.isArray(snapshot?.tabs)) return [];
+      const tabs = snapshot.tabs.slice(0, 32).filter(tab => typeof tab?.id === "string" && tab.id.length <= 100).map(tab => ({
+        id: tab.id, url: sanitizeBrowserUrl(tab.url), title: String(tab.title || "").slice(0, 100)
+      }));
+      return [[panel.id, { tabs, activeTabId: tabs.find(tab => tab.id === snapshot.activeTabId)?.id || tabs[0]?.id }]];
+    }));
+    return { tree: tree(layout.tree), groups, browserTabs };
   }
 
   closeWindow(windowId) {
@@ -921,22 +990,32 @@ class CmuxWindowsRuntime {
     if (beforeWorkspaceId && !this.workspacesForWindow(targetWindowId).some(item => item.id === beforeWorkspaceId)) {
       return false;
     }
+    const previousOrder = this.state.workspaces.slice();
+    const sourceFocus = this.rendererWindow(sourceWindowId)?.activeWorkspaceId;
+    const targetFocus = this.rendererWindow(targetWindowId).activeWorkspaceId;
     workspace.windowId = targetWindowId;
-    if (beforeWorkspaceId) {
-      this.state.workspaces.splice(this.state.workspaces.indexOf(workspace), 1);
-      const targetIndex = this.state.workspaces.findIndex(item => item.id === beforeWorkspaceId);
-      this.state.workspaces.splice(targetIndex, 0, workspace);
-    }
-    if (this.rendererWindow(sourceWindowId)?.activeWorkspaceId === workspaceId) {
+    this.state.workspaces.splice(this.state.workspaces.indexOf(workspace), 1);
+    const targetIndex = beforeWorkspaceId ? this.state.workspaces.findIndex(item => item.id === beforeWorkspaceId) : this.state.workspaces.length;
+    this.state.workspaces.splice(targetIndex, 0, workspace);
+    if (sourceFocus === workspaceId) {
       this.setWindowFocus(sourceWindowId, this.workspacesForWindow(sourceWindowId)[0]?.id || null);
     }
     this.setWindowFocus(targetWindowId, workspaceId);
+    try {
+      this.persistSession();
+    } catch (error) {
+      workspace.windowId = sourceWindowId;
+      this.state.workspaces = previousOrder;
+      this.setWindowFocus(sourceWindowId, sourceFocus);
+      this.setWindowFocus(targetWindowId, targetFocus);
+      throw error;
+    }
     for (const panel of workspace.panels) {
       for (const client of this.terminals.get(panel.id)?.clients || []) {
         if (client.windowId === sourceWindowId) client.terminate();
       }
     }
-    this.persistAndBroadcast();
+    this.broadcastState();
     return true;
   }
 
@@ -1504,9 +1583,7 @@ class CmuxWindowsRuntime {
     const targetPanelId = panelId || workspace?.activePanelId;
     const found = targetPanelId ? this.findPanel(targetPanelId) : null;
     const terminal = this.ensureTerminalProcess(found?.panel);
-    if (!terminal) return false;
-    terminal.write(String(text || ""));
-    return true;
+    return terminal?.write(String(text || "")) ?? false;
   }
 
   persistAndBroadcast() {
@@ -1626,11 +1703,22 @@ class CmuxWindowsRuntime {
               writeJSON(response, 409, { error: "Select a live Codex or Claude Code terminal with cmux hooks enabled" });
               return;
             }
-            if (!Array.isArray(body.ids) || !body.ids.length || !body.ids.every(id => typeof id === "string")) {
+            const liveAgent = terminal.liveAgent;
+            const alive = await agentProcessIsLive(liveAgent.process);
+            if (!current() || this.terminals.get(panelId) !== terminal || terminal.closed || terminal.liveAgent !== liveAgent) return notFound();
+            if (!alive) {
+              terminal.liveAgent = null;
+              this.broadcastState();
+              writeJSON(response, 409, { error: "The agent exited before the comments were sent" });
+              return;
+            }
+            if (!Array.isArray(body.comments) || !body.comments.length || !body.comments.every(comment =>
+              typeof comment?.id === "string" && typeof comment.revision === "string")) {
               writeJSON(response, 400, { error: "Select at least one review comment" });
               return;
             }
-            const claim = this.diffComments.claim(scope, { ids: body.ids, retryUncertain: body.retryUncertain === true });
+            const expected = new Map(body.comments.map(comment => [comment.id, comment.revision]));
+            const claim = this.diffComments.claim(scope, { expected, retryUncertain: body.retryUncertain === true });
             if (!claim) {
               writeJSON(response, 409, { error: "Review comments changed before sending" });
               return;
@@ -1640,7 +1728,7 @@ class CmuxWindowsRuntime {
               delivery = terminal.write(`\x1b[200~${claim.prompt}\x1b[201~\r`) ? "sent" : "pending";
               if (delivery === "sent") {
                 await new Promise(resolve => setTimeout(resolve, 100));
-                if (terminal.closed) delivery = "uncertain";
+                if (terminal.closed || terminal.liveAgent !== liveAgent) delivery = "uncertain";
               }
             } finally {
               this.diffComments.finish(claim, delivery);
@@ -1703,7 +1791,7 @@ class CmuxWindowsRuntime {
         const body = await readBody(request);
         if (!ownsWorkspace(layout[1])) return notFound();
         const workspace = this.state.workspaces.find(item => item.id === layout[1]);
-        workspace.layout = { tree: body.tree || null, groups: Array.isArray(body.groups) ? body.groups : [] };
+        workspace.layout = this.normalizeWorkspaceLayout(workspace, body);
         this.schedulePersistSession();
         writeJSON(response, 200, { ok: true });
         return;
@@ -2160,10 +2248,16 @@ class CmuxWindowsRuntime {
           const terminal = this.terminals.get(panelId);
           const params = request.params || {};
           const session = agentSession(params.agent, params.sessionId, params.home);
-          if (!terminal || terminal.closed || !session) return jsonRpcErrorResponse(request.id, -32602, "Invalid session");
+          if (!terminal || terminal.closed || terminal.remote || terminal.panelToken !== panelToken || !session) {
+            return jsonRpcErrorResponse(request.id, -32602, "Invalid session");
+          }
           if (params.event === "start") {
-            terminal.liveAgent = session;
+            const process = await agentProcess(session.agent, params.pid, terminal.ptyProcess?.pid);
+            if (!process || this.terminals.get(panelId) !== terminal || terminal.closed) {
+              return jsonRpcErrorResponse(request.id, -32602, "Agent must run in the originating terminal");
+            }
             terminal.panel.agentSession = session;
+            terminal.liveAgent = { ...session, process };
           } else if (params.event === "end" && terminal.liveAgent?.sessionId === session.sessionId) {
             terminal.liveAgent = null;
           }
@@ -2222,9 +2316,20 @@ class CmuxWindowsRuntime {
         || workspace?.panels.find(panel => panel.type === "browser");
     }
     try {
-      if (command === "open-split" || (command === "open" && !surface && !target)) {
-        if (!workspace) throw new Error("Create a workspace before opening a browser");
-        target = this.createPanel(workspace.id, "browser", { url: params.url });
+      if (command === "open-split" || (command === "open" && !surface)) {
+        if (surface && !target) throw new Error("Browser surface not found");
+        const owner = target && surface ? this.findPanel(target.id)?.workspace : workspace;
+        if (!owner) throw new Error("Create a workspace before opening a browser");
+        if (params.url) {
+          const parsed = new URL(params.url);
+          if (parsed.href !== "about:blank" && !["http:", "https:"].includes(parsed.protocol)) {
+            throw new Error("Unsupported browser URL");
+          }
+        }
+        target = this.createPanel(owner.id, "browser", { url: params.url });
+      }
+      if (!target && !surface && command === "identify") {
+        return jsonRpcResponse(request.id, { workspace_id: workspace?.id, surface_id: workspace?.activePanelId, browser: null });
       }
       if (!target) throw new Error("Browser surface not found");
       const authorized = () => permitted() && this.findPanel(target.id)?.panel === target

@@ -474,8 +474,15 @@ async function recoverOlderWindows() {
   });
   const selected = choices[choice.response - 1];
   if (!selected) return;
-  const owner = inProcessRuntime.recoverWindow(selected.id);
-  if (owner) await createWindow(owner);
+  try {
+    const { readLegacyLayouts } = require("./legacy-layouts.cjs");
+    const layouts = await readLegacyLayouts(path.join(inProcessRuntime.dataDir, selected.id), selected.port);
+    const owner = inProcessRuntime.recoverWindow(selected.id, layouts);
+    if (owner) await createWindow(owner);
+  } catch (error) {
+    log(`recover older window failed: ${error.message}`);
+    await dialog.showMessageBox(parent, { type: "error", message: t("window.recoverFailed") });
+  }
 }
 
 function buildMenu() {
@@ -554,7 +561,15 @@ function buildMenu() {
 }
 
 async function createWindow(owner = inProcessRuntime.createWindow()) {
-  const bounds = initialWindowBounds();
+  const saved = owner.bounds;
+  let bounds = initialWindowBounds();
+  if (saved) {
+    const area = screen.getDisplayMatching(saved).workArea;
+    const width = Math.min(saved.width, area.width);
+    const height = Math.min(saved.height, area.height);
+    bounds = { x: Math.max(area.x, Math.min(saved.x, area.x + area.width - width)),
+      y: Math.max(area.y, Math.min(saved.y, area.y + area.height - height)), width, height };
+  }
 
   const mainWindow = new BrowserWindow({
     ...bounds,
@@ -600,7 +615,10 @@ async function createWindow(owner = inProcessRuntime.createWindow()) {
     ipcMain.on('session:flushed', flushListener);
     mainWindow.webContents.send('session:flush');
   });
-  mainWindow.once("ready-to-show", () => mainWindow.show());
+  mainWindow.once("ready-to-show", () => {
+    if (owner.maximized) mainWindow.maximize();
+    mainWindow.show();
+  });
   mainWindow.webContents.on("console-message", details => {
     log(`renderer console level=${details.level} ${details.sourceId}:${details.lineNumber} ${details.message}`);
   });
@@ -612,8 +630,17 @@ async function createWindow(owner = inProcessRuntime.createWindow()) {
     log(`render-process-gone ${JSON.stringify(details)}`);
   });
   hardenWebContents(mainWindow.webContents);
-  mainWindow.on("maximize", () => mainWindow?.webContents.send("window-state", { maximized: true }));
-  mainWindow.on("unmaximize", () => mainWindow?.webContents.send("window-state", { maximized: false }));
+  const saveGeometry = () => inProcessRuntime?.saveWindowGeometry(owner.id, mainWindow.getNormalBounds(), mainWindow.isMaximized());
+  mainWindow.on("move", saveGeometry);
+  mainWindow.on("resize", saveGeometry);
+  mainWindow.on("maximize", () => {
+    saveGeometry();
+    mainWindow.webContents.send("window-state", { maximized: true });
+  });
+  mainWindow.on("unmaximize", () => {
+    saveGeometry();
+    mainWindow.webContents.send("window-state", { maximized: false });
+  });
   const launchUrl = new URL(runtimeInfo.url);
   launchUrl.searchParams.set("locale", process.env.CMUX_WINDOWS_LOCALE || app.getLocale());
   launchUrl.searchParams.set("token", owner.token);
@@ -626,6 +653,7 @@ function stopRuntime(event) {
   // Keep Electron's Node environment alive while ConPTY delivers its exit callbacks.
   if (!runtime.closed) {
     runtime.close();
+    browserSurfaces?.close();
     void runtime.waitForPtyExits().then(() => {
       inProcessRuntime = null;
       app.quit();

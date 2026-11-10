@@ -1,12 +1,20 @@
-const {app}=require('electron');
+const {app,webContents}=require('electron');
 const fs=require('node:fs');
 const os=require('node:os');
 const path=require('node:path');
 const assert=require('node:assert/strict');
+const http=require('node:http');
+const {once}=require('node:events');
 const profile=process.env.CMUX_RESTORE_TEST_PROFILE || fs.mkdtempSync(path.join(os.tmpdir(),'cmux-session-restore-'));
 process.env.APPDATA=profile;process.env.CMUX_WINDOWS_CONFIG=path.join(profile,'cmux.json');process.env.CMUX_WINDOWS_PIPE=`\\\\.\\pipe\\cmux-session-restore-${process.pid}`;
 app.setPath('userData',path.join(profile,'electron'));
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));let failed=false;
+const expectedFile=path.join(profile,'expected-session.json');
+const restoring=process.argv.includes('--restore');
+const expected=restoring?JSON.parse(fs.readFileSync(expectedFile,'utf8')):null;
+const fixture=http.createServer((request,response)=>response.end(`<title>History fixture ${request.url}</title>`));
+fixture.listen(expected?.browserPort||0,'127.0.0.1');
+const fixtureReady=once(fixture,'listening');
 const deadline=setTimeout(()=>{console.error('Session restore test timed out');app.exit(1);},90000);
 app.once('browser-window-created',(_event,win)=>win.webContents.once('did-finish-load',async()=>{
   const evaluate=code=>win.webContents.executeJavaScript(code);
@@ -14,12 +22,19 @@ app.once('browser-window-created',(_event,win)=>win.webContents.once('did-finish
   async function api(route,body,method='POST'){
     return evaluate(`(async()=>{const token=new URL(location.href).searchParams.get('token');const r=await fetch(${JSON.stringify(route)}+'?token='+encodeURIComponent(token),{method:${JSON.stringify(method)},headers:{'Content-Type':'application/json'},${body===undefined?'':`body:JSON.stringify(${JSON.stringify(body)}),`}});if(!r.ok)throw Error('API '+r.status);return r.json();})()`);
   }
-  const expectedFile=path.join(profile,'expected-session.json');
+  async function browser(){
+    for(let n=0;n<120;n++){
+      const guest=webContents.getAllWebContents().find(contents=>contents.getTitle().startsWith('History fixture'));
+      if(guest)return guest;
+      await delay(75);
+    }
+    throw Error('Browser history fixture did not load');
+  }
   try{
+    await fixtureReady;
     win.setSize(1280,800);win.focus();win.webContents.focus();
     await waitFor("!!document.querySelector('.xterm-helper-textarea')");
-    if(process.argv.includes('--restore')){
-      const expected=JSON.parse(fs.readFileSync(expectedFile,'utf8'));
+    if(restoring){
       const state=await api('/api/state',undefined,'GET');
       assert.equal(state.activeWorkspaceId,expected.workspaceId,'Active workspace restores');
       assert.equal(state.workspaces.find(w=>w.id===expected.workspaceId).activePanelId,expected.focusId,'Focused panel/tab restores');
@@ -32,7 +47,12 @@ app.once('browser-window-created',(_event,win)=>win.webContents.once('did-finish
         const file=path.join(profile,id+'.txt');for(let n=0;n<100 && !fs.existsSync(file);n++)await delay(75);
         assert.equal(fs.readFileSync(file,'utf8').trimEnd(),cwd,'Restarted shell actually starts in its saved directory');
       }
-      console.log('PASS full app restart: per-tab shell directories, active workspace, focused split and selected tab');return;
+      await api('/api/panels/'+expected.browserId+'/focus',{});
+      const guest=await browser();
+      assert.equal(guest.navigationHistory.getActiveIndex(),1);
+      assert.deepEqual(guest.navigationHistory.getAllEntries().map(entry=>new URL(entry.url).pathname),['/first','/second','/third']);
+      assert(guest.navigationHistory.canGoBack() && guest.navigationHistory.canGoForward());
+      console.log('PASS full app restart: per-tab shell directories, active workspace, focused split, selected tab and browser navigation history');return;
     }
     const state=await api('/api/state',undefined,'GET'),workspaceId=state.activeWorkspaceId;
     const first=state.workspaces[0].panels[0].id;
@@ -48,6 +68,15 @@ app.once('browser-window-created',(_event,win)=>win.webContents.once('did-finish
     for(let n=0;n<120;n++){const current=await api('/api/state',undefined,'GET');if(Object.entries(directories).every(([id,cwd])=>current.workspaces.flatMap(w=>w.panels).find(p=>p.id===id)?.cwd===cwd))break;await delay(75);}
     const updated=await api('/api/state',undefined,'GET');
     for(const [id,cwd] of Object.entries(directories))assert.equal(updated.workspaces.flatMap(w=>w.panels).find(p=>p.id===id).cwd,cwd,'cd updates saved tab directory');
+    const browserPort=fixture.address().port;
+    const origin=`http://127.0.0.1:${browserPort}`;
+    const browserPane=await api('/api/panels',{workspaceId,type:'browser',url:origin+'/first',direction:'down'});
+    const guest=await browser();
+    await guest.loadURL(origin+'/second');
+    await guest.loadURL(origin+'/third');
+    const back=once(guest,'did-navigate');
+    guest.navigationHistory.goBack();
+    await back;
     await api('/api/workspaces',{title:'Other workspace'});
     await api('/api/panels/'+first+'/focus',{});
     await waitFor(`!!document.querySelector('[data-tab-panel-id="${second}"]')`);
@@ -55,9 +84,9 @@ app.once('browser-window-created',(_event,win)=>win.webContents.once('did-finish
     win.webContents.sendInputEvent({type:'mouseMove',...point});
     for(const type of ['mouseDown','mouseUp'])win.webContents.sendInputEvent({type,...point,button:'left',clickCount:1});
     await waitFor(`document.querySelector('.pane.is-active')?.dataset.panelId===${JSON.stringify(second)}`);
-    fs.writeFileSync(expectedFile,JSON.stringify({workspaceId,focusId:second,cmdId:third,directories}));
+    fs.writeFileSync(expectedFile,JSON.stringify({workspaceId,focusId:second,cmdId:third,directories,browserPort,browserId:browserPane.id}));
     console.log('PASS session setup: independent cd changes for hidden tabs and split panes; close immediately after pointer focus');
   }catch(error){failed=true;console.error(error.stack||error);}
-  finally{clearTimeout(deadline);win.close();}
+  finally{clearTimeout(deadline);fixture.close();win.close();}
 }));
 app.on('will-quit',event=>{if(failed){event.preventDefault();app.exit(1);}});require('../src/main.cjs');

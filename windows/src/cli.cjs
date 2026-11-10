@@ -65,7 +65,8 @@ async function main() {
     if (input.length > 1024 * 1024) throw new Error("hook input is too large");
     const payload = JSON.parse(input);
     await rpc("agent.session", {
-      agent: args[1], event: args[2], sessionId: payload.session_id, home: process.env.CODEX_HOME
+      agent: args[1], event: args[2], sessionId: payload.session_id,
+      home: args[1] === "codex" ? process.env.CODEX_HOME : process.env.CLAUDE_CONFIG_DIR, pid: process.pid
     }, { scoped: true });
     return;
   }

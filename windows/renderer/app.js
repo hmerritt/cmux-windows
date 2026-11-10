@@ -7564,7 +7564,9 @@ async function flushWorkspaceLayouts() {
   await Promise.all((state.data?.workspaces || []).map(workspace => {
     const body = JSON.stringify({
       tree: state.paneTrees.get(workspace.id) || null,
-      groups: paneTabGroups.groups.filter(group => group.workspaceId === workspace.id)
+      groups: paneTabGroups.groups.filter(group => group.workspaceId === workspace.id),
+      browserTabs: Object.fromEntries(workspace.panels.filter(panel => state.browserTabSnapshots.has(panel.id))
+        .map(panel => [panel.id, state.browserTabSnapshots.get(panel.id)]))
     });
     const previous = layoutWrites.get(workspace.id);
     if (layoutSignatures.get(workspace.id) === body) return previous;
@@ -7591,11 +7593,12 @@ function adoptWorkspaceLayouts(nextData, previousState) {
   for (const workspace of nextData.workspaces) {
     if (previousIds.has(workspace.id)) continue;
     if (workspace.layout) {
-      const { tree, groups } = workspace.layout;
+      const { tree, groups, browserTabs } = workspace.layout;
       if (tree) state.paneTrees.set(workspace.id, tree);
       else state.paneTrees.delete(workspace.id);
       paneTabGroups.groups = paneTabGroups.groups.filter(group => group.workspaceId !== workspace.id).concat(groups);
-      layoutSignatures.set(workspace.id, JSON.stringify({ tree, groups }));
+      for (const [panelId, tabs] of Object.entries(browserTabs || {})) state.browserTabSnapshots.set(panelId, tabs);
+      layoutSignatures.set(workspace.id, JSON.stringify({ tree, groups, browserTabs }));
     } else {
       scheduleWorkspaceLayouts();
     }
@@ -10617,6 +10620,7 @@ function appStateSignature(data) {
     if (!data || typeof data !== "object") return "";
     const parts = [];
     appendSignatureValue(parts, data.activeWorkspaceId);
+    appendSignatureValue(parts, data.autoResumeAgents === true);
     appendSignatureValue(parts, data.rendererPort || 0);
     appendSignatureValue(parts, Boolean(data.ptyAvailable));
     appendSignatureValue(parts, data.pipeName || "");
@@ -11352,6 +11356,11 @@ function createWorkspaceRow() {
   button.addEventListener("click", () => focusWorkspace(button.dataset.workspaceId));
   button.addEventListener("keydown", (event) => {
     if (event.target?.closest?.(".workspace-close")) return;
+    if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
+      const workspace = state.data?.workspaces.find(candidate => candidate.id === button.dataset.workspaceId);
+      if (workspace) showWorkspaceContextMenu(event, workspace);
+      return;
+    }
     if (event.key !== "Enter" && event.key !== " ") return;
     event.preventDefault();
     focusWorkspace(button.dataset.workspaceId);
@@ -15291,6 +15300,7 @@ function flushBrowserTabSnapshotsSave() {
     state.browserTabSnapshotSaveTimer = 0;
   }
   saveBrowserTabSnapshots(state.browserTabSnapshots);
+  scheduleWorkspaceLayouts();
 }
 
 function browserTabSnapshotForPanelId(panelId, fallbackUrl = state.settings.browserHomeUrl) {
@@ -17227,7 +17237,7 @@ function renderSettingsInspector(options = {}) {
     scrollbackRange.value = String(state.settings.terminalScrollback);
     scrollbackRange.dataset.settingControl = "terminalScrollback";
     const scrollbackRow = settingRow(`Scrollback ${state.settings.terminalScrollback}`, scrollbackRange);
-    section.append(settingRow(parityText("autoResumeAgents"), toggleInput(state.data?.autoResumeAgents === true,
+    terminalSection.append(settingRow(parityText("autoResumeAgents"), toggleInput(state.data?.autoResumeAgents === true,
       enabled => void api("/api/session/agent-resume", { method: "PUT", body: JSON.stringify({ enabled }) }))));
     bindDeferredSettingRange(scrollbackRange, scrollbackRow, {
       settingKey: "terminalScrollback",
@@ -17437,6 +17447,7 @@ function settingsInspectorSignature() {
     state.settingsQuery,
     settingsInspectorSettingsSignature(category, searching)
   ];
+  if (searching || category === "terminal") parts.push(state.data?.autoResumeAgents === true);
   if (!searching && category === "data") {
     parts.push(dataSettingsSignature());
     return parts.join("\u001e");
@@ -38635,9 +38646,18 @@ function showWorkspaceContextMenu(event, workspace) {
       const action = workspace.ssh.state === "disconnected" ? "reconnect" : "disconnect";
       return api(`/api/workspaces/${workspace.id}/ssh/${action}`, { method: "POST" }).catch(error => toast(error.message));
     })] : []),
-    ...(state.data?.windows || []).flatMap((window, index) => window.id === state.data.windowId ? [] : [
-      contextMenuButton(`${parityText("moveToWindow")} ${index + 1}`, () => moveWorkspaceToWindow(workspace.id, window.id))
-    ]),
+    ...(state.data?.windows || []).flatMap((window, index) => {
+      if (window.id === state.data.windowId) return [];
+      const action = contextMenuButton(`${parityText("moveToWindow")} ${index + 1}`, () => moveWorkspaceToWindow(workspace.id, window.id));
+      action.dataset.moveWorkspaceWindow = window.id;
+      action.onkeydown = event => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        event.stopPropagation();
+        action.click();
+      };
+      return [action];
+    }),
     contextMenuButton(parityText(workspace.browserAutomation ? "disableBrowserAutomation" : "enableBrowserAutomation"), () =>
       api("/api/workspaces/" + workspace.id, {
         method: "PATCH", body: JSON.stringify({ browserAutomation: !workspace.browserAutomation })
@@ -38729,7 +38749,13 @@ function showWorkspaceContextMenu(event, workspace) {
     contextMenuSectionTitle(t("workspace.backgrounds")),
     backgroundActions
   );
-  showContextMenuAt(menu, event.clientX, event.clientY);
+  if (event.type === "keydown") {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    showContextMenuAt(menu, bounds.left, bounds.bottom);
+    (menu.querySelector("[data-move-workspace-window]") || menu.querySelector("button:not(:disabled)"))?.focus();
+  } else {
+    showContextMenuAt(menu, event.clientX, event.clientY);
+  }
 }
 
 function showPaneSplitterContextMenu(event, splitter) {
@@ -39281,7 +39307,9 @@ async function composeDiffReview(panelId) {
     });
     if (confirm === null) return;
     const result = await api(endpoint + "/send", {
-      method: "POST", body: JSON.stringify({ ids: pending.map(item => item.id), retryUncertain: uncertain })
+      method: "POST", body: JSON.stringify({
+        comments: pending.map(item => ({ id: item.id, revision: item.revision || item.id })), retryUncertain: uncertain
+      })
     });
     toast(parityText(result.delivery === "sent" ? "reviewSent" : result.delivery === "uncertain" ? "reviewUncertain" : "reviewError"));
   } catch { toast(parityText("reviewError")); }

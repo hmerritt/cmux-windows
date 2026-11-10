@@ -4,10 +4,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
+const http = require('node:http');
 const assert = require('node:assert/strict');
 const { WebSocket } = require('ws');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const terminalCloseOnly = process.argv.includes('--pty-close-only');
+const agentFixture = process.argv.includes('--codex-only') ? 'codex' : process.argv.includes('--claude-only') ? 'claude' : null;
 
 (async () => {
   const lease = net.createServer();
@@ -20,7 +22,43 @@ const terminalCloseOnly = process.argv.includes('--pty-close-only');
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.CMUX_WINDOWS_NODE;
   delete env.CMUX_WINDOWS_DISABLE_PTY;
-  const child = spawn(binary, [`--user-data-dir=${path.join(profile,'electron')}`, `--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1'], {env, windowsHide:true, stdio:'ignore'});
+  const modelRequests = [];
+  const model = agentFixture && http.createServer(async (request, response) => {
+    const parts = [];
+    for await (const part of request) parts.push(part);
+    if (/\/(responses|messages)(\?|$)/.test(request.url)) modelRequests.push(Buffer.concat(parts).toString());
+    response.writeHead(400, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'Local fixture response' } }));
+  });
+  if (model) await new Promise(resolve => model.listen(0, '127.0.0.1', resolve));
+  const modelOrigin = model && `http://127.0.0.1:${model.address().port}`;
+  if (agentFixture === 'codex') {
+    env.CODEX_HOME = path.join(profile, 'codex');
+    env.CMUX_CODEX_TEST_KEY = 'test-key';
+    fs.mkdirSync(env.CODEX_HOME);
+    fs.writeFileSync(path.join(env.CODEX_HOME, 'config.toml'), [
+      'model = "gpt-5"', 'model_provider = "fixture"', 'check_for_update_on_startup = false',
+      '[model_providers.fixture]', 'name = "Local fixture"', `base_url = "${modelOrigin}/v1"`,
+      'env_key = "CMUX_CODEX_TEST_KEY"', 'wire_api = "responses"',
+      'request_max_retries = 0', 'stream_max_retries = 0',
+      `[projects.${JSON.stringify(path.join(profile, 'repo'))}]`, 'trust_level = "trusted"', ''
+    ].join('\n'));
+  } else if (agentFixture === 'claude') {
+    env.CLAUDE_CONFIG_DIR = path.join(profile, 'claude');
+    delete env.ANTHROPIC_AUTH_TOKEN;
+    env.ANTHROPIC_API_KEY = 'local-test-key';
+    env.ANTHROPIC_BASE_URL = modelOrigin;
+    env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
+    fs.mkdirSync(env.CLAUDE_CONFIG_DIR);
+    fs.writeFileSync(path.join(env.CLAUDE_CONFIG_DIR, '.claude.json'), JSON.stringify({
+      hasCompletedOnboarding: true, theme: 'dark',
+      projects: { [path.join(profile, 'repo').replaceAll('\\', '/')]: { hasTrustDialogAccepted: true } },
+      customApiKeyResponses: { approved: [env.ANTHROPIC_API_KEY], rejected: [] }
+    }));
+  }
+  const scale = process.env.CMUX_TEST_DEVICE_SCALE;
+  const child = spawn(binary, [`--user-data-dir=${path.join(profile,'electron')}`, `--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1',
+    ...(scale ? [`--force-device-scale-factor=${scale}`] : [])], {env, windowsHide:true, stdio:'ignore'});
   const exited = new Promise(resolve => child.once('exit', (code, signal) => resolve({code, signal})));
   let socket;
   try {
@@ -48,17 +86,17 @@ const terminalCloseOnly = process.argv.includes('--pty-close-only');
       clearTimeout(waiter.timer);
       response.error ? waiter.reject(new Error(response.error.message)) : waiter.resolve(response.result);
     });
-    function call(method,params={}) {
+    function call(method,params={},sessionId) {
       return new Promise((resolve,reject)=>{
         const requestId=++id;
         const timer=setTimeout(()=>{pending.delete(requestId);reject(new Error(`CDP timeout: ${method}`));},15000);
         pending.set(requestId,{resolve,reject,timer});
-        socket.send(JSON.stringify({id:requestId,method,params}));
+        socket.send(JSON.stringify({id:requestId,method,params,sessionId}));
       });
     }
-    async function evaluate(expression) {
-      const result=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});
-      if (result.exceptionDetails) throw new Error(result.exceptionDetails.text);
+    async function evaluate(expression,sessionId) {
+      const result=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true},sessionId);
+      if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
       return result.result.value;
     }
     async function api(route,body,method='POST') {
@@ -72,7 +110,7 @@ const terminalCloseOnly = process.argv.includes('--pty-close-only');
         return response.json();
       })()`);
     }
-    async function verifyTerminal(panelId) {
+    async function terminalOutput(panelId, command, marker) {
       const pageUrl = new URL(target.url);
       const terminalUrl = new URL(`/terminal/${panelId}`, pageUrl);
       terminalUrl.protocol = 'ws:';
@@ -80,26 +118,124 @@ const terminalCloseOnly = process.argv.includes('--pty-close-only');
       const terminal = new WebSocket(terminalUrl, {origin:pageUrl.origin});
       let timeout;
       try {
-        await new Promise((resolve, reject) => {
+        return await new Promise((resolve, reject) => {
           timeout = setTimeout(() => reject(new Error(`Terminal ${panelId} did not execute a command`)), 10000);
           terminal.once('error', reject);
           terminal.once('close', () => reject(new Error(`Terminal ${panelId} closed before producing output`)));
           terminal.once('open', () => {
-            // The caret splits the marker in the echoed input, and cmd strips it in the output.
-            terminal.send(JSON.stringify({type:'input', data:'echo CMUX_PTY_^READY\r'}));
+            terminal.send(JSON.stringify({type:'input', data:command}));
           });
           let output = '';
           terminal.on('message', raw => {
             const message = JSON.parse(raw);
             if (message.type !== 'output') return;
             output += message.data;
-            if (output.includes('CMUX_PTY_READY')) resolve();
+            const match = marker.exec(output);
+            if (match) resolve(match);
           });
         });
       } finally {
         clearTimeout(timeout);
         terminal.close();
       }
+    }
+    function verifyTerminal(panelId) {
+      // cmd strips the caret, so the command echo cannot match the output marker.
+      return terminalOutput(panelId, 'echo CMUX_PTY_^READY\r', /CMUX_PTY_READY/);
+    }
+    async function waitFor(check, label) {
+      for (let i = 0; i < 160; i++) {
+        const result = await check();
+        if (result) return result;
+        await delay(100);
+      }
+      throw new Error(`Timed out waiting for ${label}`);
+    }
+    async function verifyPackagedSsh() {
+      const workspace = await api('/api/workspaces/ssh', {
+        destination: process.env.CMUX_TEST_SSH_DESTINATION,
+        port: process.env.CMUX_TEST_SSH_PORT,
+        identity: process.env.CMUX_TEST_SSH_IDENTITY
+      });
+      const connected = () => waitFor(async () => {
+        const current = (await api('/api/state', undefined, 'GET')).workspaces.find(item => item.id === workspace.id);
+        if (current?.ssh?.error) throw new Error(current.ssh.error);
+        return current?.ssh?.state === 'connected' && current;
+      }, 'packaged SSH workspace');
+      const ssh = action => api(`/api/workspaces/${workspace.id}/ssh/${action}`);
+      try {
+        const { panels } = await connected();
+        const panelId = panels.find(panel => panel.type === 'terminal').id;
+        const pid = async label => (await terminalOutput(panelId,
+          `printf 'CMUX_SSH_${label}_%s\\n' "$$"\r`, new RegExp(`CMUX_SSH_${label}_(\\d+)`)))[1];
+        const before = await pid('BEFORE');
+        await api('/api/panels', { workspaceId: workspace.id, type: 'browser', url: `http://localhost:${process.env.CMUX_TEST_SSH_HTTP_PORT}` });
+        const remotePage = await waitFor(async () => {
+          const targets = await call('Target.getTargets');
+          return targets.targetInfos.find(target => target.title === 'Remote SSH fixture');
+        }, 'remote loopback browser page');
+        const { sessionId } = await call('Target.attachToTarget', { targetId: remotePage.targetId, flatten: true });
+        const http = () => evaluate("fetch(location.href,{cache:'no-store'}).then(response=>response.text())", sessionId);
+        const webSocket = () => evaluate(`new Promise((resolve,reject)=>{
+          const socket=new WebSocket(location.href.replace('http:','ws:'));
+          socket.onmessage=event=>{socket.close();resolve(event.data)};
+          socket.onerror=()=>reject(new Error('WebSocket failed'));
+          setTimeout(()=>{socket.close();reject(new Error('WebSocket timed out'))},5000);
+        })`, sessionId);
+        assert.match(await http(), /remote-linux-loopback/);
+        assert.equal(await webSocket(), 'remote-websocket');
+        await ssh('disconnect');
+        await assert.rejects(http());
+        await assert.rejects(webSocket());
+        await ssh('reconnect');
+        await connected();
+        assert.equal(await pid('AFTER'), before);
+        assert.match(await http(), /remote-linux-loopback/);
+        assert.equal(await webSocket(), 'remote-websocket');
+        console.log('PASS packaged SSH: same Linux PID after reconnect, remote loopback HTTP and WebSocket, fail-closed disconnect');
+      } finally {
+        await api(`/api/workspaces/${workspace.id}`, undefined, 'DELETE');
+      }
+    }
+    async function verifyPackagedAgent(agent) {
+      const repo = path.join(profile, 'repo');
+      fs.mkdirSync(repo);
+      const git = (...args) => execFileSync('git', ['-C', repo, ...args], { windowsHide: true, stdio: 'pipe' });
+      git('init'); git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.invalid');
+      fs.writeFileSync(path.join(repo, 'review.txt'), 'old\n');
+      git('add', '.'); git('commit', '-m', 'Review fixture');
+      fs.writeFileSync(path.join(repo, 'review.txt'), 'new\n');
+      const workspace = await api('/api/workspaces', { title: `Local ${agent} fixture`, cwd: repo });
+      const panelId = workspace.panels[0].id;
+      const diff = await api('/api/panels', { workspaceId: workspace.id, type: 'diff', cwd: repo });
+      await api(`/api/panels/${diff.id}/review-comments`, { path: 'review.txt', side: 'new', line: 1, context: '+new', text: 'Packaged agent review fixture' });
+      await terminalOutput(panelId, `cmux hooks setup ${agent}; Write-Output ('HOOK_' + 'READY')\r`, /HOOK_READY/);
+      const agentHome = agent === 'codex' ? env.CODEX_HOME : env.CLAUDE_CONFIG_DIR;
+      assert(fs.existsSync(path.join(agentHome, agent === 'codex' ? 'hooks.json' : 'settings.json')), 'Packaged CLI must install the agent hooks');
+      const executable = (process.env[`CMUX_TEST_${agent.toUpperCase()}_EXE`] || agent).replaceAll("'", "''");
+      const flags = agent === 'codex' ? '--dangerously-bypass-hook-trust --no-alt-screen' : '';
+      await api(`/api/panels/${panelId}/focus`, {});
+      await api('/api/input', { panelId, text: `& '${executable}' ${flags} 'Session hook fixture'\r` });
+      await waitFor(async () => {
+        const current = (await api('/api/state', undefined, 'GET')).workspaces.find(item => item.id === workspace.id);
+        return current?.panels.find(panel => panel.id === panelId)?.liveAgent === agent;
+      }, `${agent} SessionStart hook from the originating terminal`);
+      const saved = await waitFor(() => {
+        try {
+          const snapshot = JSON.parse(fs.readFileSync(path.join(profile, 'runtime', 'session.json'), 'utf8'));
+          return snapshot.workspaces.find(item => item.id === workspace.id)?.panels[0].agentSession;
+        } catch { return null; }
+      }, `saved native ${agent} session ID`);
+      assert.match(saved.sessionId, /^[\da-f-]{36}$/i);
+      assert.equal(saved.home, agentHome);
+      console.log(`PASS packaged ${agent}: real CLI launched the installed hook and recorded its native session ID`);
+      await waitFor(() => modelRequests.some(body => body.includes('Session hook fixture')), `${agent} initial model request`);
+      await waitFor(() => evaluate("!!document.querySelector('.pane-review-chip:not([hidden])')"), 'pending review chip');
+      await evaluate("document.querySelector('.pane-review-chip:not([hidden])').click()");
+      await waitFor(() => evaluate("document.querySelector('.dialog-input')?.value.includes('Packaged agent review fixture')"), 'review composer preview');
+      await evaluate("document.querySelector('.dialog-confirm').click()");
+      await waitFor(() => modelRequests.some(body => body.includes('Packaged agent review fixture') && body.includes('new line 1')), `${agent} submitted review prompt`);
+      console.log(`PASS packaged ${agent} composer: review text and file/line context reached the agent`);
     }
     async function startTerminalWorkspace(title) {
       const workspace = await api('/api/workspaces', {title, cwd:profile});
@@ -141,6 +277,21 @@ const terminalCloseOnly = process.argv.includes('--pty-close-only');
     assert(loaded,'Packaged renderer must finish loading');
     const state=await api('/api/state',undefined,'GET');
     assert.equal(state.ptyAvailable,true,'Packaged native ConPTY must load');
+    if (agentFixture) {
+      try { await verifyPackagedAgent(agentFixture); }
+      catch (error) {
+        console.error(await evaluate("[...document.querySelectorAll('.xterm-screen')].map(screen=>screen.textContent.slice(-3000))"));
+        throw error;
+      }
+      await evaluate('window.cmuxNative.closeWindow()').catch(() => {});
+      return;
+    }
+    if (process.argv.includes('--ssh-only')) {
+      assert(process.env.CMUX_TEST_SSH_DESTINATION, 'Set the Linux SSH fixture connection variables');
+      await verifyPackagedSsh();
+      await evaluate('window.cmuxNative.closeWindow()').catch(() => {});
+      return;
+    }
     if (terminalCloseOnly) {
       await verifyTerminalClose();
       return;
@@ -171,6 +322,10 @@ const terminalCloseOnly = process.argv.includes('--pty-close-only');
       await delay(100);
     }
     await evaluate("document.querySelector('[data-settings-category=terminal]').click()");
+    for (let i=0; i<100; i++) {
+      if (await evaluate("!!document.querySelector('[data-setting-control=terminalRenderer]')")) break;
+      await delay(100);
+    }
     await evaluate("const select=document.querySelector('[data-setting-control=terminalRenderer]');select.value='webgl';select.dispatchEvent(new Event('change'));document.getElementById('closeInspectorButton').click()");
     let gpu=false;
     for(let i=0;i<100;i++) {
@@ -226,11 +381,13 @@ const terminalCloseOnly = process.argv.includes('--pty-close-only');
     fs.mkdirSync(documentRoot);
     fs.writeFileSync(path.join(documentRoot,'notes.md'),'# Packaged document\n\n![Local](local.png)\n\n```mermaid\nflowchart LR\nA --> B\n```\n');
     fs.appendFileSync(path.join(documentRoot,'notes.md'),'\n```vega-lite\n'+JSON.stringify({data:{values:[{category:'A',value:4},{category:'B',value:9}]},mark:'bar',encoding:{x:{field:'category',type:'nominal'},y:{field:'value',type:'quantitative'}}})+'\n```\n');
+    fs.writeFileSync(path.join(documentRoot, 'review.txt'), 'original line\n');
     fs.copyFileSync(path.resolve(__dirname,'../src/assets/cmux.png'),path.join(documentRoot,'local.png'));
     const git=(...args)=>execFileSync('git',['-C',documentRoot,...args],{windowsHide:true,stdio:'pipe'});
     git('init');git('config','user.name','Test');git('config','user.email','test@example.invalid');
     git('add','.');git('commit','-m','Packaged fixture');
     fs.appendFileSync(path.join(documentRoot,'notes.md'),'\nPackaged change\n');
+    fs.writeFileSync(path.join(documentRoot, 'review.txt'), 'changed line\n');
     const documents=await api('/api/workspaces',{title:'Packaged documents',cwd:documentRoot});
     await api('/api/panels',{workspaceId:documents.id,type:'markdown',cwd:documentRoot,filePath:'notes.md',title:'notes.md'});
     let documentReady=false;
@@ -240,7 +397,7 @@ const terminalCloseOnly = process.argv.includes('--pty-close-only');
       await delay(100);
     }
     assert(documentReady,'Packaged Markdown, scoped local images, Mermaid and sandboxed Vega assets must render');
-    await api('/api/panels',{workspaceId:documents.id,type:'diff',cwd:documentRoot,title:'Git diff'});
+    const diffPanel = await api('/api/panels',{workspaceId:documents.id,type:'diff',cwd:documentRoot,title:'Git diff'});
     let diffReady=false;
     for(let i=0;i<100;i++) {
       diffReady=await evaluate("document.querySelector('.diff-patch')?.textContent.includes('+Packaged change')");
@@ -258,6 +415,26 @@ const terminalCloseOnly = process.argv.includes('--pty-close-only');
     }
     assert(splitReady,'Packaged split diff layout and line numbers must render');
     assert.equal(JSON.parse(fs.readFileSync(path.join(profile,'cmux','diff-viewer','preferences.json'),'utf8')).layout,'split');
+
+    await evaluate("document.querySelector('[data-git-path=\"review.txt\"]').click()");
+    await tabWait("document.querySelector('.diff-patch').textContent.includes('+changed line')");
+    for (const [side, kind] of [['old', 'removed'], ['new', 'added']]) {
+      await evaluate(`document.querySelector('.diff-${kind} + .diff-review-add').click()`);
+      await tabWait("!!document.querySelector('.dialog-input')");
+      await evaluate(`document.querySelector('.dialog-input').value='Review ${side} line';document.querySelector('.dialog-confirm').click()`);
+      await tabWait(`document.querySelector('.diff-patch').textContent.includes('Review ${side} line')`);
+    }
+    const reviewRoute = `/api/panels/${diffPanel.id}/review-comments`;
+    const comments = await api(reviewRoute, undefined, 'GET');
+    assert.deepEqual(comments.map(comment => comment.side), ['old', 'new']);
+    const terminalReview = `/api/panels/${documents.panels[0].id}/review-comments`;
+    assert.equal((await api(terminalReview, undefined, 'GET')).length, 2);
+    fs.writeFileSync(path.join(documentRoot, 'review.txt'), 'updated after review\n');
+    await tabWait("document.querySelector('.diff-review-outdated').textContent.includes('Review new line')");
+    await api(`${reviewRoute}/${comments[1].id}`, undefined, 'DELETE');
+    assert.equal((await api(reviewRoute, undefined, 'GET')).length, 1);
+    await evaluate("document.querySelector('[data-git-path=\"notes.md\"]').click()");
+    console.log('PASS packaged diff review: comments on both sides, pending batch, outdated anchor and deletion');
 
     git('branch','packaged-base','HEAD');
     fs.writeFileSync(path.join(documentRoot,'branch.txt'),'packaged branch content\n');git('add','branch.txt');git('commit','-m','Packaged branch fixture');
@@ -321,6 +498,7 @@ const terminalCloseOnly = process.argv.includes('--pty-close-only');
     await verifyTerminalClose();
     console.log('PASS packaged cmux.exe: ConPTY, WebGL, inline images, file IPC, keyboard split, Markdown, local images, Mermaid, sandboxed Vega, split Git diff and saved display preferences, directory search, file creation/rename/duplicate and Recycle Bin, clean close');
   } finally {
+    model?.close();
     socket?.close();
     if(child.exitCode===null) {
       child.kill();

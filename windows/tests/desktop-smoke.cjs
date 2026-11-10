@@ -128,11 +128,11 @@ app.on('browser-window-created', (_event, win) => {
       win.webContents.sendInputEvent({type:'keyDown', keyCode:'Escape'});
       win.webContents.sendInputEvent({type:'keyUp', keyCode:'Escape'});
       const browser = await api('/api/panels', {workspaceId:workspace.id, type:'browser', url:`http://127.0.0.1:${fixture.address().port}/`});
-      await waitFor("document.querySelector('webview') !== null");
+      await waitFor("document.querySelector('.browser-view') !== null");
       const { webContents } = require('electron');
       let guest;
       for (let attempt = 0; attempt < 100; attempt++) {
-        guest = webContents.getAllWebContents().find(contents => contents.getType() === 'webview' && contents.getTitle() === 'Browser verification');
+        guest = webContents.getAllWebContents().find(contents => contents.getTitle() === 'Browser verification');
         if (guest) break;
         await delay(100);
       }

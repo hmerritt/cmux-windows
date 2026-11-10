@@ -3,14 +3,19 @@ const { browserUrl } = require("./browser-surfaces.cjs");
 const world = 31337;
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-function describePage(selector, generation) {
+function describePage(selector, generation, interactive, compact, maxDepth) {
   const root = selector ? document.querySelector(selector) : document.body;
   if (!root) throw new Error("Browser snapshot selector was not found");
   const controls = Array.from(root.querySelectorAll("a[href],button,input,textarea,select,[role],[contenteditable]"))
-    .filter(node => node.getClientRects().length).slice(0, 200);
+    .filter(node => {
+      if (!node.getClientRects().length) return false;
+      let depth = 0;
+      for (let parent = node; parent && parent !== root; parent = parent.parentElement) depth++;
+      return depth <= maxDepth;
+    }).slice(0, 200);
   globalThis.cmuxSnapshotElements = { generation, controls };
   return [
-    document.title, location.href, (root.innerText || "").slice(0, 16000),
+    document.title, location.href, ...(!interactive && !compact ? [(root.innerText || "").slice(0, 16000)] : []),
     ...controls.map((node, index) => {
       const label = node.getAttribute("aria-label") || node.labels?.[0]?.innerText || node.innerText ||
         node.getAttribute("placeholder") || node.getAttribute("name") || "";
@@ -64,13 +69,14 @@ async function perform(surfaces, panel, params, authorized, deadline) {
   const surface = surfaces.get(panel.id);
   if (surface.remote) await surface.remote.ready;
   const { contents } = surface;
-  const snapshot = () => inPage(contents, describePage, params.selector || "", surface.generation = (surface.generation || 0) + 1);
+  const snapshot = () => inPage(contents, describePage, params.selector || "", surface.generation = (surface.generation || 0) + 1,
+    Boolean(params.interactive), Boolean(params.compact), Math.max(1, Math.min(500, Number(params.maxDepth) || 500)));
   const command = params.command;
   const state = () => ({ surface_id: panel.id, ...surfaces.state(surface) });
   if (!authorized()) throw new Error("Browser automation permission was revoked");
   if (["navigate", "open", "open-split"].includes(command)) {
     const url = browserUrl(params.url || panel.url);
-    if (contents.getURL() !== url) await contents.loadURL(url);
+    await surfaces.navigate(surface, url);
   } else if (command === "back" || command === "forward") {
     if (command === "back") contents.navigationHistory.goBack();
     else contents.navigationHistory.goForward();
@@ -88,7 +94,8 @@ async function perform(surfaces, panel, params, authorized, deadline) {
       const matches = await inPage(contents, (selector, text) =>
         (!selector || Boolean(document.querySelector(selector))) && (!text || document.body?.innerText.includes(text)),
       params.selector || "", params.text || "");
-      if (loaded && url && matches) return state();
+      const condition = !params.condition || Boolean(await contents.executeJavaScript(`Boolean((${params.condition}))`));
+      if (loaded && url && matches && condition) return state();
       await pause(100);
     }
     throw new Error("Browser wait timed out");
@@ -102,6 +109,8 @@ async function perform(surfaces, panel, params, authorized, deadline) {
   } else if (["click", "type", "fill"].includes(command)) {
     if (typeof params.selector !== "string" || !params.selector) throw new Error("Missing element selector");
     if (command !== "click" && typeof params.text !== "string") throw new Error("Missing text");
+    const ref = /^@?e(\d+)-\d+$/.exec(params.selector);
+    if (ref && Number(ref[1]) !== surface.generation) throw new Error("Browser snapshot ref has expired");
     const target = await inPage(contents, prepareInput, params.selector, command, params.text || "");
     if (!authorized()) throw new Error("Browser automation permission was revoked");
     if (command === "click") {
@@ -115,7 +124,8 @@ async function perform(surfaces, panel, params, authorized, deadline) {
     }
   } else if (command === "press") {
     const key = params.key === "Esc" ? "Escape" : params.key;
-    const codes = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 };
+    const codes = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8, End: 35, Home: 36,
+      ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Delete: 46 };
     if (!codes[key] && (typeof key !== "string" || key.length !== 1)) throw new Error("Unsupported key");
     const code = codes[key] || key.toUpperCase().charCodeAt(0);
     await sendInput(contents, async send => {
@@ -130,15 +140,17 @@ async function perform(surfaces, panel, params, authorized, deadline) {
 async function runBrowserCommand(surfaces, panel, params, authorized) {
   const timeout = Math.max(100, Math.min(15000, Number(params.timeout) || 10000));
   let timer;
+  let active = true;
   try {
     const result = await Promise.race([
-      perform(surfaces, panel, params, authorized, Date.now() + timeout),
+      perform(surfaces, panel, params, () => active && authorized(), Date.now() + timeout),
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Browser command timed out")), timeout); })
     ]);
     if (!authorized()) throw new Error("Browser automation permission was revoked");
     if (Buffer.byteLength(JSON.stringify(result)) > 8 * 1024 * 1024) throw new Error("Browser response is too large");
     return result;
   } finally {
+    active = false;
     clearTimeout(timer);
   }
 }

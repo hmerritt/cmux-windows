@@ -60,7 +60,7 @@ class DiffComments {
   edit(scope, id, text) {
     const existing = this.list(scope).find(item => item.id === id);
     if (!existing || existing.delivery === "sending") throw new Error("Comment is unavailable");
-    const comment = { ...existing, text: this.text(text), delivery: "pending", claim: undefined };
+    const comment = { ...existing, text: this.text(text), revision: randomUUID(), delivery: "pending", claim: undefined };
     this.save(this.items.map(item => item === existing ? comment : item));
     return comment;
   }
@@ -71,12 +71,12 @@ class DiffComments {
     this.save(this.items.filter(item => item !== existing));
   }
 
-  claim(scope, { retryUncertain = false, ids } = {}) {
+  claim(scope, { retryUncertain = false, expected } = {}) {
     const comments = this.list(scope);
     if (comments.some(item => item.delivery === "sending")) return null;
     const eligible = comments.filter(item => item.delivery === "pending" || (retryUncertain && item.delivery === "uncertain"));
-    const selected = Array.isArray(ids) ? eligible.filter(item => ids.includes(item.id)) : eligible;
-    if (!selected.length || (Array.isArray(ids) && selected.length !== ids.length)) return null;
+    const selected = expected ? eligible.filter(item => expected.get(item.id) === (item.revision || item.id)) : eligible;
+    if (!selected.length || (expected && selected.length !== expected.size)) return null;
     const prompt = "Please address these diff review comments.\n\n" + selected.map(comment =>
       `${clean(comment.root)} / ${clean(comment.path)} (${comment.side} line ${comment.line}, ${comment.source})\n` +
       `${clean(comment.context)}\n${comment.text}`

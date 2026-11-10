@@ -9,7 +9,8 @@ function parseBrowserArgs(args) {
   const options = new Map([
     ["--surface", "surface"], ["--url", "url"], ["--selector", "selector"],
     ["--text", "text"], ["--script", "script"], ["--load-state", "loadState"],
-    ["--url-contains", "urlContains"], ["--timeout-ms", "timeout"], ["--out", "output"]
+    ["--url-contains", "urlContains"], ["--timeout-ms", "timeout"], ["--out", "output"],
+    ["--function", "condition"], ["--max-depth", "maxDepth"]
   ]);
   let json = false;
   let output;
@@ -22,7 +23,8 @@ function parseBrowserArgs(args) {
       else params[option] = args[++index];
     } else if (arg === "--json") json = true;
     else if (arg === "--snapshot-after") params.snapshotAfter = true;
-    else if (arg === "--interactive" || arg === "--compact") params.interactive = true;
+    else if (arg === "--interactive") params.interactive = true;
+    else if (arg === "--compact") params.compact = true;
     else if (arg.startsWith("--")) throw new Error("Unknown browser option " + arg);
     else values.push(arg);
   }

@@ -31,6 +31,7 @@
     "test:middle-click": "electron tests/middle-click-desktop.cjs",
     "test:restore": "node tests/run-session-restore.cjs",
     "test:browser-layout": "electron tests/browser-layout-desktop.cjs",
+    "test:workflows": "electron tests/workflow-desktop.cjs",
     "test:paste": "electron tests/paste-desktop.cjs",
     "test:tabs": "node tests/run-tab-interactions.cjs",
     "test:sidebar": "electron tests/sidebar-layout-desktop.cjs",

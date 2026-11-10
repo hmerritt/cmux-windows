@@ -43,10 +43,26 @@ const messages = {
     "dialog.cancel": "Cancel",
     "window.recoverOlderWindows": "Recover Older Windows",
     "window.noOlderWindows": "No older Windows sessions were found.",
+    "window.recoverFailed": "The selected window could not be recovered.",
     "panel.browser": "Browser",
     "panel.terminal": "Terminal"
   }
 };
+
+const recoveryKeys = ["window.recoverOlderWindows", "window.noOlderWindows", "window.recoverFailed"];
+const recoveryMessages = {
+  ar: ["استرداد النوافذ القديمة", "لم يتم العثور على جلسات Windows قديمة.", "تعذر استرداد النافذة المحددة."],
+  de: ["Ältere Fenster wiederherstellen", "Es wurden keine älteren Windows-Sitzungen gefunden.", "Das ausgewählte Fenster konnte nicht wiederhergestellt werden."],
+  es: ["Recuperar ventanas anteriores", "No se encontraron sesiones anteriores de Windows.", "No se pudo recuperar la ventana seleccionada."],
+  fr: ["Récupérer les anciennes fenêtres", "Aucune ancienne session Windows n’a été trouvée.", "Impossible de récupérer la fenêtre sélectionnée."],
+  ja: ["以前のウィンドウを復元", "以前の Windows セッションが見つかりませんでした。", "選択したウィンドウを復元できませんでした。"],
+  ko: ["이전 창 복구", "이전 Windows 세션을 찾을 수 없습니다.", "선택한 창을 복구할 수 없습니다."],
+  "zh-Hans": ["恢复旧窗口", "找不到旧的 Windows 会话。", "无法恢复所选窗口。"],
+  "zh-Hant": ["復原舊視窗", "找不到舊的 Windows 工作階段。", "無法復原選取的視窗。"]
+};
+for (const [locale, labels] of Object.entries(recoveryMessages)) {
+  messages[locale] = Object.fromEntries(recoveryKeys.map((key, index) => [key, labels[index]]));
+}
 
 function currentLocale() {
   const locale = String(process.env.CMUX_WINDOWS_LOCALE || Intl.DateTimeFormat().resolvedOptions().locale || 'en');

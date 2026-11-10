@@ -137,7 +137,7 @@ app.on('browser-window-created', (_event, win) => {
       const workspace=(await api('/api/state',undefined,'GET')).activeWorkspaceId;
       await api('/api/panels',{workspaceId:workspace,type:'browser',url:`http://127.0.0.1:${fixture.address().port}/`});
       let guest;
-      for(let i=0;i<80;i++){guest=webContents.getAllWebContents().find(contents=>contents.getType()==='webview' && contents.getTitle()==='Shortcut fixture');if(guest)break;await delay(100);}
+      for(let i=0;i<80;i++){guest=webContents.getAllWebContents().find(contents=>contents.getTitle()==='Shortcut fixture');if(guest)break;await delay(100);}
       assert(guest,'Browser fixture must load');
       function guestKey(code,modifiers=[]) {guest.focus();guest.sendInputEvent({type:'keyDown',keyCode:code,modifiers});guest.sendInputEvent({type:'keyUp',keyCode:code,modifiers});}
       const hits=fixtureHits;guestKey('r',['control']);

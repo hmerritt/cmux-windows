@@ -91,6 +91,9 @@ class BrowserSurfaces {
       emit("did-navigate", { url });
     };
     contents.on("did-navigate", navigate);
+    contents.on("did-start-navigation", event => {
+      if (event.isMainFrame !== false) surface.generation = (surface.generation || 0) + 1;
+    });
     contents.on("did-navigate-in-page", (event, url, isMainFrame) => {
       if (isMainFrame) navigate(event, url);
     });
@@ -115,6 +118,18 @@ class BrowserSurfaces {
       muted: contents.isAudioMuted(),
       zoom: contents.getZoomFactor()
     };
+  }
+
+  navigate(surface, url) {
+    const target = browserUrl(url);
+    if (surface.navigation?.url === target) return surface.navigation.promise;
+    if (surface.contents.getURL() === target && !surface.navigation) return Promise.resolve();
+    const navigation = { url: target };
+    surface.navigation = navigation;
+    navigation.promise = surface.contents.loadURL(target).finally(() => {
+      if (surface.navigation === navigation) surface.navigation = null;
+    });
+    return navigation.promise;
   }
 
   detach(surface) {
@@ -143,6 +158,13 @@ class BrowserSurfaces {
     }
   }
 
+  close() {
+    for (const surface of this.surfaces.values()) {
+      this.detach(surface);
+      if (!surface.contents.isDestroyed()) surface.contents.close();
+    }
+  }
+
   async rendererAction(windowId, panelId, action, value) {
     if (this.find(panelId)?.workspace.windowId !== windowId) return null;
     const window = this.windows.get(windowId);
@@ -159,7 +181,7 @@ class BrowserSurfaces {
       if (surface.remote) await surface.remote.ready;
       if (this.find(panelId)?.workspace.windowId !== windowId || surface.owner !== window) return null;
       const history = this.find(panelId)?.panel.browserHistory;
-      if (!surface.restoring && !surface.contents.getURL() && Array.isArray(history?.entries) &&
+      if (!surface.restoring && !surface.navigation && !surface.contents.getURL() && Array.isArray(history?.entries) &&
           history.entries.length <= 100 && history.entries.every(entry => {
             try { return browserUrl(entry.url) === entry.url; } catch { return false; }
           }) && Number.isInteger(history.index) && history.index >= 0 && history.index < history.entries.length) {
@@ -192,7 +214,7 @@ class BrowserSurfaces {
       case "navigate":
         if (surface.remote) await surface.remote.ready;
         if (this.find(panelId)?.workspace.windowId !== windowId || surface.owner !== window) return null;
-        void contents.loadURL(browserUrl(value)).catch(() => {});
+        void this.navigate(surface, value).catch(() => {});
         return true;
       case "back": contents.navigationHistory.goBack(); return true;
       case "forward": contents.navigationHistory.goForward(); return true;
