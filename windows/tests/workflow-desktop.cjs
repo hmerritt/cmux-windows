@@ -108,6 +108,22 @@ app.once("browser-window-created", (_event, source) => source.webContents.once("
     await source.webContents.executeJavaScript("document.activeElement.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter',bubbles:true,cancelable:true}))");
     await until(async () => (await request(destination, "/api/state")).body.workspaces.some(item => item.id === workspace.id), "workspace move");
     assert.equal((await request(source, `/api/panels/${terminal.id}`, "DELETE")).status, 404);
+    const dragged = (await request(source, "/api/workspaces", "POST", { title: "Cross-window drag fixture" })).body;
+    const nonce = await until(() => source.webContents.executeJavaScript(`(() => {
+      const row = document.querySelector('[data-workspace-id="${dragged.id}"]');
+      if (!row) return null;
+      const dataTransfer = new DataTransfer();
+      row.dispatchEvent(new DragEvent('dragstart', { dataTransfer, bubbles: true }));
+      return dataTransfer.getData('application/x-cmux-workspace');
+    })()`), "workspace drag transfer data");
+    await delay(500);
+    await destination.webContents.executeJavaScript(`(() => {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.setData('application/x-cmux-workspace', ${JSON.stringify(nonce)});
+      document.getElementById('workspaceList').dispatchEvent(new DragEvent('drop', { dataTransfer, bubbles: true, cancelable: true }));
+    })()`);
+    await until(async () => (await request(destination, "/api/state")).body.workspaces.some(item => item.id === dragged.id), "workspace sidebar drop");
+    await request(destination, `/api/workspaces/${workspace.id}/focus`, "POST");
     const sourceClosed = once(source, "closed");
     source.close();
     await sourceClosed;
@@ -119,7 +135,7 @@ app.once("browser-window-created", (_event, source) => source.webContents.once("
     });
     await until(() => fs.existsSync(output), "destination terminal input");
     assert.equal(fs.readFileSync(output, "utf8"), pid);
-    console.log("PASS live window transfer, renderer credential revocation and browser CLI against a local fixture");
+    console.log("PASS keyboard and sidebar drop workspace transfers, live PTY and browser state, credential revocation and browser CLI");
     if (process.env.CMUX_TEST_SSH_DESTINATION) {
       await verifySsh(destination);
     }

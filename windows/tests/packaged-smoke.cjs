@@ -57,12 +57,13 @@ const agentFixture = process.argv.includes('--codex-only') ? 'codex' : process.a
     }));
   }
   const scale = process.env.CMUX_TEST_DEVICE_SCALE;
-  const child = spawn(binary, [`--user-data-dir=${path.join(profile,'electron')}`, `--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1',
-    ...(scale ? [`--force-device-scale-factor=${scale}`] : [])], {env, windowsHide:true, stdio:'ignore'});
-  const exited = new Promise(resolve => child.once('exit', (code, signal) => resolve({code, signal})));
-  let socket;
-  try {
-    let target;
+  let child, exited, socket, target;
+  const pending = new Map();
+  async function launch() {
+    target = null;
+    child = spawn(binary, [`--user-data-dir=${path.join(profile,'electron')}`, `--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1',
+      ...(scale ? [`--force-device-scale-factor=${scale}`] : [])], {env, windowsHide:true, stdio:'ignore'});
+    exited = new Promise(resolve => child.once('exit', (code, signal) => resolve({code, signal})));
     for (let i=0; i<200; i++) {
       try {
         const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
@@ -75,8 +76,6 @@ const agentFixture = process.argv.includes('--codex-only') ? 'codex' : process.a
     assert(target, 'Packaged renderer must start');
     socket = new WebSocket(target.webSocketDebuggerUrl);
     await new Promise((resolve,reject)=>{socket.once('open',resolve);socket.once('error',reject);});
-    const pending = new Map();
-    let id=0;
     socket.on('message', raw=>{
       const response=JSON.parse(raw);
       if (!response.id) return;
@@ -86,6 +85,10 @@ const agentFixture = process.argv.includes('--codex-only') ? 'codex' : process.a
       clearTimeout(waiter.timer);
       response.error ? waiter.reject(new Error(response.error.message)) : waiter.resolve(response.result);
     });
+  }
+  try {
+    await launch();
+    let id=0;
     function call(method,params={},sessionId) {
       return new Promise((resolve,reject)=>{
         const requestId=++id;
@@ -151,6 +154,16 @@ const agentFixture = process.argv.includes('--codex-only') ? 'codex' : process.a
       }
       throw new Error(`Timed out waiting for ${label}`);
     }
+    function focusPane(workspaceId, panelId) {
+      return waitFor(() => evaluate(`(() => {
+        const row = document.querySelector('.workspace-row[data-workspace-id="${workspaceId}"]');
+        if (!row) return false;
+        if (!row.classList.contains('is-active')) { row.click(); return false; }
+        if (document.querySelector('.pane.is-active[data-panel-id="${panelId}"]')) return true;
+        document.querySelector('.surface-tab[data-panel-id="${panelId}"]')?.click();
+        return false;
+      })()`), 'focused packaged pane');
+    }
     async function verifyPackagedSsh() {
       const workspace = await api('/api/workspaces/ssh', {
         destination: process.env.CMUX_TEST_SSH_DESTINATION,
@@ -169,7 +182,8 @@ const agentFixture = process.argv.includes('--codex-only') ? 'codex' : process.a
         const pid = async label => (await terminalOutput(panelId,
           `printf 'CMUX_SSH_${label}_%s\\n' "$$"\r`, new RegExp(`CMUX_SSH_${label}_(\\d+)`)))[1];
         const before = await pid('BEFORE');
-        await api('/api/panels', { workspaceId: workspace.id, type: 'browser', url: `http://localhost:${process.env.CMUX_TEST_SSH_HTTP_PORT}` });
+        const browser = await api('/api/panels', { workspaceId: workspace.id, type: 'browser', url: `http://localhost:${process.env.CMUX_TEST_SSH_HTTP_PORT}` });
+        await focusPane(workspace.id, browser.id);
         const remotePage = await waitFor(async () => {
           const targets = await call('Target.getTargets');
           return targets.targetInfos.find(target => target.title === 'Remote SSH fixture');
@@ -230,12 +244,67 @@ const agentFixture = process.argv.includes('--codex-only') ? 'codex' : process.a
       assert.equal(saved.home, agentHome);
       console.log(`PASS packaged ${agent}: real CLI launched the installed hook and recorded its native session ID`);
       await waitFor(() => modelRequests.some(body => body.includes('Session hook fixture')), `${agent} initial model request`);
+      await focusPane(workspace.id, panelId);
       await waitFor(() => evaluate("!!document.querySelector('.pane-review-chip:not([hidden])')"), 'pending review chip');
       await evaluate("document.querySelector('.pane-review-chip:not([hidden])').click()");
       await waitFor(() => evaluate("document.querySelector('.dialog-input')?.value.includes('Packaged agent review fixture')"), 'review composer preview');
       await evaluate("document.querySelector('.dialog-confirm').click()");
       await waitFor(() => modelRequests.some(body => body.includes('Packaged agent review fixture') && body.includes('new line 1')), `${agent} submitted review prompt`);
+      await waitFor(async () => {
+        const comments = await api(`/api/panels/${diff.id}/review-comments`, undefined, 'GET');
+        return comments[0]?.delivery === 'sent';
+      }, `${agent} review delivery record`);
       console.log(`PASS packaged ${agent} composer: review text and file/line context reached the agent`);
+
+      const nativeExe = process.env[`CMUX_TEST_${agent.toUpperCase()}_EXE`];
+      if (!nativeExe) return;
+      const shimDir = path.join(profile, 'resume-bin');
+      fs.mkdirSync(shimDir);
+      const argsFile = path.join(profile, 'resume-args.txt');
+      const quote = value => `"${value.replaceAll('%', '%%')}"`;
+      fs.writeFileSync(path.join(shimDir, `${agent}.cmd`), [
+        '@echo off', `>>${quote(argsFile)} echo %*`, `${quote(nativeExe)} ${flags} %*`, ''
+      ].join('\r\n'));
+      const pathKey = Object.keys(env).find(key => key.toUpperCase() === 'PATH') || 'Path';
+      env[pathKey] = shimDir + path.delimiter + env[pathKey];
+      await api('/api/session/agent-resume', { enabled: true }, 'PUT');
+      await closePackagedWindow();
+      await launch();
+      await waitFor(() => fs.existsSync(argsFile) && fs.statSync(argsFile).size > 0, `${agent} native resume arguments`);
+      if (agent === 'codex') {
+        // Codex defers the resumed SessionStart hook until a new turn starts.
+        await waitFor(async () => {
+          try { return await evaluate("document.querySelector('.xterm-rows')?.textContent.includes('Ask Codex to do anything')"); }
+          catch { return false; }
+        }, 'Codex resumed prompt');
+        await delay(1000);
+        await api('/api/input', { panelId, text: 'Confirm the saved conversation is present' });
+        await delay(250);
+        await api('/api/input', { panelId, text: '\r' });
+        await waitFor(() => modelRequests.some(body => body.includes('Confirm the saved conversation is present') &&
+          body.includes('Packaged agent review fixture')), 'Codex resumed conversation history in the native request');
+      }
+      await waitFor(async () => {
+        try {
+          const current = (await api('/api/state', undefined, 'GET')).workspaces.find(item => item.id === workspace.id);
+          return current?.panels.find(panel => panel.id === panelId)?.liveAgent === agent;
+        } catch { return false; }
+      }, `resumed native ${agent} session`);
+      assert.deepEqual(fs.readFileSync(argsFile, 'utf8').trim().split(/\r?\n/), [
+        `${agent === 'codex' ? 'resume' : '--resume'} ${saved.sessionId}`
+      ]);
+      console.log(`PASS packaged ${agent} restart: the native session resumed once with its saved ID`);
+    }
+    async function closePackagedWindow() {
+      socket.send(JSON.stringify({ id: ++id, method: 'Runtime.evaluate', params: { expression: 'window.cmuxNative.closeWindow()' } }));
+      let timer;
+      try {
+        const outcome = await Promise.race([exited, new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Packaged window did not close')), 10000);
+        })]);
+        assert.deepEqual(outcome, { code: 0, signal: null });
+      } finally { clearTimeout(timer); }
+      socket.close();
     }
     async function startTerminalWorkspace(title) {
       const workspace = await api('/api/workspaces', {title, cwd:profile});
@@ -275,21 +344,22 @@ const agentFixture = process.argv.includes('--codex-only') ? 'codex' : process.a
       await delay(100);
     }
     assert(loaded,'Packaged renderer must finish loading');
+    await call('Page.bringToFront');
     const state=await api('/api/state',undefined,'GET');
     assert.equal(state.ptyAvailable,true,'Packaged native ConPTY must load');
     if (agentFixture) {
       try { await verifyPackagedAgent(agentFixture); }
       catch (error) {
-        console.error(await evaluate("[...document.querySelectorAll('.xterm-screen')].map(screen=>screen.textContent.slice(-3000))"));
+        console.error(await evaluate("[...document.querySelectorAll('.xterm-rows')].map(rows=>rows.textContent.slice(-3000))"));
         throw error;
       }
-      await evaluate('window.cmuxNative.closeWindow()').catch(() => {});
+      await closePackagedWindow();
       return;
     }
     if (process.argv.includes('--ssh-only')) {
       assert(process.env.CMUX_TEST_SSH_DESTINATION, 'Set the Linux SSH fixture connection variables');
       await verifyPackagedSsh();
-      await evaluate('window.cmuxNative.closeWindow()').catch(() => {});
+      await closePackagedWindow();
       return;
     }
     if (terminalCloseOnly) {
@@ -459,6 +529,7 @@ const agentFixture = process.argv.includes('--codex-only') ? 'codex' : process.a
     assert(branchReady,'Packaged branch source includes committed changes from the selected merge base');
 
     await evaluate("document.querySelector('.diff-pane').focus()");
+    await tabWait("document.activeElement.matches('.diff-pane')");
     await call('Input.dispatchKeyEvent',{type:'keyDown',key:'F',code:'KeyF',windowsVirtualKeyCode:70,modifiers:10});
     await call('Input.dispatchKeyEvent',{type:'keyUp',key:'F',code:'KeyF',windowsVirtualKeyCode:70,modifiers:10});
     let searchReady=false;
@@ -499,8 +570,12 @@ const agentFixture = process.argv.includes('--codex-only') ? 'codex' : process.a
     console.log('PASS packaged cmux.exe: ConPTY, WebGL, inline images, file IPC, keyboard split, Markdown, local images, Mermaid, sandboxed Vega, split Git diff and saved display preferences, directory search, file creation/rename/duplicate and Recycle Bin, clean close');
   } finally {
     model?.close();
+    if (child?.exitCode === null && socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ id: 0, method: 'Runtime.evaluate', params: { expression: 'window.cmuxNative.closeWindow()' } }));
+      await Promise.race([exited, delay(3500)]);
+    }
     socket?.close();
-    if(child.exitCode===null) {
+    if(child?.exitCode===null) {
       child.kill();
       await Promise.race([exited,delay(5000)]);
     }
