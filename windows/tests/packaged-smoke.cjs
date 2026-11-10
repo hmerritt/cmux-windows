@@ -62,6 +62,7 @@ const agentFixture = process.argv.includes('--codex-only') ? 'codex' : process.a
   async function launch() {
     target = null;
     child = spawn(binary, [`--user-data-dir=${path.join(profile,'electron')}`, `--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1',
+      '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
       ...(scale ? [`--force-device-scale-factor=${scale}`] : [])], {env, windowsHide:true, stdio:'ignore'});
     exited = new Promise(resolve => child.once('exit', (code, signal) => resolve({code, signal})));
     for (let i=0; i<200; i++) {
