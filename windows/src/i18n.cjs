@@ -40,6 +40,9 @@ const messages = {
     "dialog.chooseBackground": "Choose background image",
     "dialog.chooseWorkspaceFolder": "Choose workspace folder",
     "dialog.images": "Images",
+    "dialog.cancel": "Cancel",
+    "window.recoverOlderWindows": "Recover Older Windows",
+    "window.noOlderWindows": "No older Windows sessions were found.",
     "panel.browser": "Browser",
     "panel.terminal": "Terminal"
   }

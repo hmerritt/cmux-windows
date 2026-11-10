@@ -17203,6 +17203,8 @@ function renderSettingsInspector(options = {}) {
     scrollbackRange.value = String(state.settings.terminalScrollback);
     scrollbackRange.dataset.settingControl = "terminalScrollback";
     const scrollbackRow = settingRow(`Scrollback ${state.settings.terminalScrollback}`, scrollbackRange);
+    section.append(settingRow(parityText("autoResumeAgents"), toggleInput(state.data?.autoResumeAgents === true,
+      enabled => void api("/api/session/agent-resume", { method: "PUT", body: JSON.stringify({ enabled }) }))));
     bindDeferredSettingRange(scrollbackRange, scrollbackRow, {
       settingKey: "terminalScrollback",
       formatLabel: (value) => `Scrollback ${value}`

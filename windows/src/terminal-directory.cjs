@@ -38,7 +38,7 @@ class TerminalDirectoryReports {
   }
 }
 
-function directoryReportingShellArgs(shellPath) {
+function directoryReportingShellArgs(shellPath, startup = "") {
   const base = require('node:path').basename(shellPath).toLowerCase();
   if (base === 'pwsh.exe' || base === 'powershell.exe') {
     const script = `$global:__cmuxOriginalPrompt = (Get-Command prompt -CommandType Function).ScriptBlock
@@ -48,9 +48,13 @@ function global:prompt {
   }
   & $global:__cmuxOriginalPrompt
 }`;
-    return ['-NoLogo', '-NoExit', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')];
+    return ['-NoLogo', '-NoExit', '-EncodedCommand', Buffer.from(script + startup, 'utf16le').toString('base64')];
   }
-  if (base === 'cmd.exe') return ['/K', 'prompt $E]7;file:///$P$E\\$P$G'];
+  if (base === 'cmd.exe') {
+    const prompt = 'prompt $E]7;file:///$P$E\\$P$G';
+    const resume = startup ? ' & powershell.exe -NoLogo -NoProfile -EncodedCommand ' + Buffer.from(startup, 'utf16le').toString('base64') : '';
+    return ['/K', prompt + resume];
+  }
   return [];
 }
 

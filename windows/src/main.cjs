@@ -422,6 +422,20 @@ async function openUrlInBrowserProfile(url, profileId = "system") {
 
 async function startRuntime() {
   const { createCmuxWindowsRuntime } = require("./server.cjs");
+  if (process.platform === "win32") {
+    const bin = path.join(app.getPath("userData"), "bin");
+    fs.mkdirSync(bin, { recursive: true });
+    const launcher = path.join(bin, "cmux.cmd");
+    const cli = path.join(__dirname, "cli.cjs");
+    const batchPath = value => value.replaceAll("%", "%%");
+    fs.writeFileSync(launcher, [
+      "@echo off", "setlocal", "set ELECTRON_RUN_AS_NODE=1",
+      `"${batchPath(process.execPath)}" "${batchPath(cli)}" %*`, ""
+    ].join("\r\n"));
+    process.env.CMUX_WINDOWS_LAUNCHER = launcher;
+    const pathKey = Object.keys(process.env).find(key => key.toUpperCase() === "PATH") || "PATH";
+    process.env[pathKey] = bin + path.delimiter + (process.env[pathKey] || "");
+  }
   inProcessRuntime = createCmuxWindowsRuntime({ staticDir: path.join(appRoot, "renderer") });
   browserSurfaces = new BrowserSurfaces({
     runtime: inProcessRuntime,
@@ -438,11 +452,31 @@ async function startRuntime() {
   trustedRendererOrigin = new URL(runtimeInfo.url).origin;
 }
 
+async function recoverOlderWindows() {
+  const parent = BrowserWindow.getFocusedWindow();
+  if (!parent) return;
+  const candidates = inProcessRuntime.recoverableWindows();
+  if (!candidates.length) {
+    await dialog.showMessageBox(parent, { message: t("window.noOlderWindows") });
+    return;
+  }
+  const choices = candidates.slice(0, 8);
+  const choice = await dialog.showMessageBox(parent, {
+    message: t("window.recoverOlderWindows"), cancelId: 0,
+    buttons: [t("dialog.cancel"), ...choices.map(({ title, count }) => title + " (" + count + ")")]
+  });
+  const selected = choices[choice.response - 1];
+  if (!selected) return;
+  const owner = inProcessRuntime.recoverWindow(selected.id);
+  if (owner) await createWindow(owner);
+}
+
 function buildMenu() {
   const template = [
     {
       label: t("menu.file"),
       submenu: [
+        { label: t("window.recoverOlderWindows"), click: () => void recoverOlderWindows() },
         { label: t("menu.newWorkspace"), accelerator: "Ctrl+N", click: () => sendCmuxCommand("workspace.new") },
         { label: t("menu.renameWorkspace"), click: () => sendCmuxCommand("workspace.rename") },
         { label: t("menu.workspaceBlueprints"), click: () => sendCmuxCommand("settings.blueprints") },

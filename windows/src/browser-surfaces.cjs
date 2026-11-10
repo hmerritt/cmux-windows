@@ -47,6 +47,11 @@ class BrowserSurfaces {
       const panel = this.find(panelId)?.panel;
       if (panel) {
         panel.url = url;
+        const history = contents.navigationHistory;
+        const index = history.getActiveIndex();
+        const entries = history.getAllEntries().map(entry => ({ url: entry.url, title: entry.title }));
+        const start = Math.max(0, index - 50);
+        panel.browserHistory = { index: index - start, entries: entries.slice(start, start + 100) };
         this.runtime.schedulePersistSession();
       }
       surface.refs.clear();
@@ -108,6 +113,17 @@ class BrowserSurfaces {
         surface.owner = window;
         window.contentView.addChildView(surface.view);
         this.configure(surface.contents, window.webContents);
+      }
+      const history = this.find(panelId)?.panel.browserHistory;
+      if (!surface.restoring && !surface.contents.getURL() && Array.isArray(history?.entries) &&
+          history.entries.length <= 100 && history.entries.every(entry => {
+            try { return browserUrl(entry.url) === entry.url; } catch { return false; }
+          }) && Number.isInteger(history.index) && history.index >= 0 && history.index < history.entries.length) {
+        surface.restoring = surface.contents.navigationHistory.restore({
+          index: history.index,
+          entries: history.entries.map(({ url, title }) => ({ url, title }))
+        }).catch(() => {}).finally(() => { surface.restoring = null; });
+        await surface.restoring;
       }
       return this.state(surface);
     }

@@ -8,6 +8,7 @@ const { fileURLToPath } = require("node:url");
 const { spawn, spawnSync } = require("node:child_process");
 const { WebSocket, WebSocketServer } = require("ws");
 const { t } = require("./i18n.cjs");
+const { agentSession, atomicJson, plainScrollback, resumeScript } = require("./session-restore.cjs");
 const {TerminalDirectoryReports, directoryReportingShellArgs} = require("./terminal-directory.cjs");
 
 let pty = null;
@@ -566,6 +567,7 @@ class TerminalProcess {
     this.rows = options.rows || 30;
     this.clients = new Set();
     this.backlog = "";
+    this.scrollback = plainScrollback(panel.scrollback);
     this.closed = false;
     this.ptyProcess = null;
     this.ptyExit = null;
@@ -577,11 +579,14 @@ class TerminalProcess {
 
   start() {
     const shellPath = resolveShell(this.panel.shellProfile, this.panel.shellPath);
+    const resume = this.panel.pendingResume;
+    delete this.panel.pendingResume;
+    const shellArgs = directoryReportingShellArgs(shellPath, resumeScript(resume));
     const cwd = this.panel.cwd && fs.existsSync(this.panel.cwd)
       ? this.panel.cwd
       : os.homedir();
     if (pty) {
-      this.ptyProcess = pty.spawn(shellPath, directoryReportingShellArgs(shellPath), {
+      this.ptyProcess = pty.spawn(shellPath, shellArgs, {
         name: "xterm-256color",
         cols: this.cols,
         rows: this.rows,
@@ -603,7 +608,7 @@ class TerminalProcess {
       return;
     }
 
-    this.child = spawn(shellPath, directoryReportingShellArgs(shellPath), {
+    this.child = spawn(shellPath, shellArgs, {
       cwd,
       env: terminalProcessEnv(this.panel, this.panelToken),
       stdio: "pipe",
@@ -620,6 +625,7 @@ class TerminalProcess {
 
   attach(socket) {
     this.clients.add(socket);
+    if (this.scrollback) socket.send(JSON.stringify({ type: "output", data: this.scrollback + "\n" }));
     if (this.backlog) {
       socket.send(JSON.stringify({ type: "output", data: this.backlog }));
     }
@@ -732,9 +738,9 @@ class CmuxWindowsRuntime {
     return Boolean(pty);
   }
 
-  loadSession() {
+  loadSession(file = this.sessionFile) {
     try {
-      const parsed = JSON.parse(fs.readFileSync(this.sessionFile, "utf8"));
+      const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
       if (Array.isArray(parsed.workspaces)) {
         const titleSignatureBefore = parsed.workspaces.map((workspace) => workspaceTitle(workspace.title)).join("\0");
         const workspaces = repairWorkspaceTitles(parsed.workspaces.map((workspace) => ({
@@ -754,6 +760,11 @@ class CmuxWindowsRuntime {
               shellPath: panel.type === "terminal" ? sanitizeShellPath(panel.shellPath) : "",
               terminalFontSize: panel.type === "terminal" ? sanitizeTerminalFontSize(panel.terminalFontSize, 0) : 0,
               url: panel.type === "browser" ? sanitizeBrowserUrl(panel.url) : defaultBrowserHomeUrl,
+              scrollback: panel.type === "terminal" ? plainScrollback(panel.scrollback) : undefined,
+              pendingResume: parsed.autoResumeAgents === true && panel.type === "terminal"
+                ? agentSession(panel.agentSession?.agent, panel.agentSession?.sessionId, panel.agentSession?.home) : null,
+              agentSession: panel.type === "terminal"
+                ? agentSession(panel.agentSession?.agent, panel.agentSession?.sessionId, panel.agentSession?.home) : null,
               runtime: this,
               needsAttention: false,
               notificationText: ""
@@ -761,18 +772,21 @@ class CmuxWindowsRuntime {
             : []
         })));
         const titleSignatureAfter = workspaces.map((workspace) => workspace.title).join("\0");
-        this.sessionRepaired = titleSignatureBefore !== titleSignatureAfter;
+        if (file === this.sessionFile) this.sessionRepaired = titleSignatureBefore !== titleSignatureAfter;
         const windows = this.restoreWindowOwners(parsed.windows, workspaces, parsed.activeWorkspaceId);
         return {
           activeWorkspaceId: windows[0].activeWorkspaceId,
           rendererPort: sanitizeRendererPort(parsed.rendererPort),
           windows,
+          autoResumeAgents: parsed.autoResumeAgents === true,
+          recoveredWindows: Array.isArray(parsed.recoveredWindows) ? parsed.recoveredWindows : [],
           workspaces
         };
       }
     } catch {
       // First run or corrupt state: start clean.
     }
+    if (file !== this.sessionFile) return null;
     const workspace = this.newWorkspace("Workspace 1");
     const windows = this.restoreWindowOwners([], [workspace], workspace.id);
     return { activeWorkspaceId: workspace.id, rendererPort: 0, windows, workspaces: [workspace] };
@@ -808,6 +822,44 @@ class CmuxWindowsRuntime {
   createWindow() {
     const window = { id: id("window"), activeWorkspaceId: null };
     this.state.windows.push(window);
+    this.registerRendererWindow(window.id);
+    this.persistAndBroadcast();
+    return this.rendererWindow(window.id);
+  }
+
+  recoverableWindows() {
+    const recovered = new Set(this.state.recoveredWindows);
+    return fs.readdirSync(this.dataDir, { withFileTypes: true, throwIfNoEntry: false })
+      .filter(entry => entry.isDirectory() && /^[a-f0-9-]{36}$/i.test(entry.name) && !recovered.has(entry.name))
+      .map(entry => ({ id: entry.name, state: this.loadSession(path.join(this.dataDir, entry.name, "session.json")) }))
+      .filter(entry => entry.state?.workspaces.length)
+      .map(({ id, state }) => ({ id, title: state.workspaces[0].title, count: state.workspaces.length }));
+  }
+
+  recoverWindow(profileId) {
+    if (!this.recoverableWindows().some(candidate => candidate.id === profileId)) return null;
+    const legacy = this.loadSession(path.join(this.dataDir, profileId, "session.json"));
+    if (!legacy) return null;
+    const window = { id: id("window"), activeWorkspaceId: null };
+    for (const workspace of legacy.workspaces) {
+      const previousActive = workspace.activePanelId;
+      const wasActive = legacy.activeWorkspaceId === workspace.id;
+      workspace.id = id("workspace");
+      workspace.windowId = window.id;
+      delete workspace.layout;
+      for (const panel of workspace.panels) {
+        const active = panel.id === previousActive;
+        panel.id = id(panel.type === "browser" ? "browser" : "surface");
+        panel.workspaceId = workspace.id;
+        delete panel.pendingResume;
+        delete panel.agentSession;
+        if (active) workspace.activePanelId = panel.id;
+      }
+      if (wasActive || !window.activeWorkspaceId) window.activeWorkspaceId = workspace.id;
+    }
+    this.state.workspaces.push(...legacy.workspaces);
+    this.state.windows.push(window);
+    this.state.recoveredWindows = [...(this.state.recoveredWindows || []), profileId];
     this.registerRendererWindow(window.id);
     this.persistAndBroadcast();
     return this.rendererWindow(window.id);
@@ -884,6 +936,8 @@ class CmuxWindowsRuntime {
     fs.mkdirSync(this.dataDir, { recursive: true });
     const payload = {
       version: 2,
+      autoResumeAgents: this.state.autoResumeAgents === true,
+      recoveredWindows: this.state.recoveredWindows,
       activeWorkspaceId: this.state.activeWorkspaceId,
       rendererPort: sanitizeRendererPort(this.state.rendererPort),
       windows: this.state.windows,
@@ -911,13 +965,16 @@ class CmuxWindowsRuntime {
           shellProfile: panel.type === "terminal" ? sanitizeShellProfile(panel.shellProfile) : "",
           shellPath: panel.type === "terminal" ? sanitizeShellPath(panel.shellPath) : "",
           terminalFontSize: panel.type === "terminal" ? sanitizeTerminalFontSize(panel.terminalFontSize, 0) : 0,
-          url: panel.url
+          url: panel.url,
+          browserHistory: panel.browserHistory,
+          agentSession: panel.agentSession,
+          scrollback: panel.type === "terminal"
+            ? plainScrollback((panel.scrollback || "") + "\n" + (this.terminals.get(panel.id)?.backlog || ""))
+            : undefined
         }))
       }))
     };
-    const temporary = this.sessionFile + ".tmp";
-    fs.writeFileSync(temporary, JSON.stringify(payload, null, 2));
-    fs.renameSync(temporary, this.sessionFile);
+    atomicJson(this.sessionFile, payload);
   }
 
   newWorkspace(title, options = {}) {
@@ -972,6 +1029,7 @@ class CmuxWindowsRuntime {
   serializedState(windowId = this.state.windows[0].id) {
     return {
       windowId,
+      autoResumeAgents: this.state.autoResumeAgents === true,
       windows: this.state.windows.map(window => ({ id: window.id })),
       activeWorkspaceId: this.rendererWindow(windowId)?.activeWorkspaceId || null,
       rendererPort: sanitizeRendererPort(this.state.rendererPort),
@@ -1037,6 +1095,7 @@ class CmuxWindowsRuntime {
       shellPath: panel.shellPath || "",
       terminalFontSize: panel.type === "terminal" ? sanitizeTerminalFontSize(panel.terminalFontSize, 0) : 0,
       url: panel.url,
+      liveAgent: this.terminals.get(panel.id)?.liveAgent?.agent,
       needsAttention: panel.needsAttention,
       notificationText: panel.notificationText,
       notificationOrder: panel.notificationOrder || 0
@@ -1512,6 +1571,13 @@ class CmuxWindowsRuntime {
         writeJSON(response, 200, this.serializeWorkspace(this.createWorkspaceFromOptions(body, { prewarmResponse: response, windowId })));
         return;
       }
+      if (request.method === "PUT" && url.pathname === "/api/session/agent-resume") {
+        const body = await readBody(request);
+        this.state.autoResumeAgents = body.enabled === true;
+        this.persistAndBroadcast();
+        writeJSON(response, 200, { ok: true });
+        return;
+      }
       if (request.method === "POST" && url.pathname === "/api/session/save") {
         this.persistSession();
         writeJSON(response, 200, { ok: true });
@@ -1914,6 +1980,20 @@ class CmuxWindowsRuntime {
       try {
         request = JSON.parse(line);
         if (request.method === "system.ping") {
+          return jsonRpcResponse(request.id, { ok: true });
+        }
+        if (request.method === "agent.session") {
+          const terminal = this.terminals.get(panelId);
+          const params = request.params || {};
+          const session = agentSession(params.agent, params.sessionId, params.home);
+          if (!terminal || terminal.closed || !session) return jsonRpcErrorResponse(request.id, -32602, "Invalid session");
+          if (params.event === "start") {
+            terminal.liveAgent = session;
+            terminal.panel.agentSession = session;
+          } else if (params.event === "end" && terminal.liveAgent?.sessionId === session.sessionId) {
+            terminal.liveAgent = null;
+          }
+          this.schedulePersistAndBroadcast();
           return jsonRpcResponse(request.id, { ok: true });
         }
         if (request.method === "terminal.send") {
