@@ -8075,6 +8075,7 @@ const commands = [
   { id: "workspace.rename", label: "Rename Workspace", shortcut: "", run: () => renameActiveWorkspace() },
   { id: "workspace.color", label: "Change Workspace Color", shortcut: "", run: () => cycleWorkspaceColor() },
   { id: "workspace.changeFolder", label: "Change Workspace Folder", shortcut: "", run: () => chooseWorkspaceFolder() },
+  { id: "workspace.openSsh", label: parityText("openSshWorkspace"), shortcut: "", run: () => openSshWorkspace() },
   { id: "workspace.openFolder", label: "Open Workspace Folder", shortcut: "", run: () => openWorkspaceFolder() },
   { id: "workspace.copySetup", label: "Copy Workspace Setup", shortcut: "", run: () => copyWorkspaceSetup() },
   { id: "workspace.pasteSetup", label: "Paste Workspace Setup", shortcut: "", run: () => pasteWorkspaceSetup() },
@@ -38595,6 +38596,11 @@ function showWorkspaceContextMenu(event, workspace) {
   const meta = document.createElement("div");
   meta.className = "context-meta";
   meta.textContent = `${workspace.terminalCount || 0} terminals / ${workspace.browserCount || 0} browsers`;
+  if (workspace.ssh) {
+    const { destination, state: connection, error } = workspace.ssh;
+    meta.textContent = `${destination} · ${parityText(`ssh_${connection}`)}`;
+    if (error) meta.append(document.createElement("br"), error);
+  }
   const actions = document.createElement("div");
   actions.className = "context-actions";
   const renameWorkspaceAction = contextMenuButton("Rename", () => renameWorkspaceById(workspace.id, workspace.title));
@@ -38602,6 +38608,10 @@ function showWorkspaceContextMenu(event, workspace) {
   actions.append(
     contextMenuButton(isActive ? "Focused" : "Focus", () => focusWorkspace(workspace.id), isActive),
     renameWorkspaceAction,
+    ...(workspace.ssh ? [contextMenuButton(parityText(workspace.ssh.state === "disconnected" ? "sshReconnect" : "sshDisconnect"), () => {
+      const action = workspace.ssh.state === "disconnected" ? "reconnect" : "disconnect";
+      return api(`/api/workspaces/${workspace.id}/ssh/${action}`, { method: "POST" }).catch(error => toast(error.message));
+    })] : []),
     ...(state.data?.windows || []).flatMap((window, index) => window.id === state.data.windowId ? [] : [
       contextMenuButton(`${parityText("moveToWindow")} ${index + 1}`, () => moveWorkspaceToWindow(workspace.id, window.id))
     ]),
@@ -39232,6 +39242,24 @@ function contextColorPicker(activeColor, onPick) {
   };
   wrapper.append(label, input);
   return wrapper;
+}
+
+async function openSshWorkspace() {
+  const options = await showTextDialog({
+    title: parityText("openSshWorkspace"),
+    message: parityText("sshSetup"),
+    placeholder: "user@host",
+    confirmLabel: parityText("sshConnect"),
+    multiline: true
+  });
+  if (!options?.trim()) return;
+  const [destination, port, identity, name] = options.split(/\r?\n/).map(line => line.trim());
+  try {
+    await api("/api/workspaces/ssh", {
+      method: "POST",
+      body: JSON.stringify({ destination, port: port || undefined, identity: identity || undefined, name: name || undefined })
+    });
+  } catch (error) { toast(error.message); }
 }
 
 function showTextDialog({

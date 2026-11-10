@@ -575,7 +575,13 @@ class TerminalProcess {
     this.child = null;
     this.directoryReports = new TerminalDirectoryReports();
     this.panelToken = crypto.randomBytes(32).toString("hex");
-    this.start();
+    this.remote = options.remote;
+    if (this.remote) {
+      this.remote.terminals.add(this);
+      if (this.remote.bridge) void this.remote.attach(this);
+    } else {
+      this.start();
+    }
   }
 
   start() {
@@ -650,7 +656,7 @@ class TerminalProcess {
 
   emitOutput(data) {
     if (this.panel.runtime.closed) return;
-    for (const reported of this.directoryReports.read(data)) {
+    for (const reported of this.remote ? [] : this.directoryReports.read(data)) {
       const cwd = sanitizeDirectoryPath(reported, "");
       if (cwd && cwd !== this.panel.cwd) {
         this.panel.cwd = cwd;
@@ -677,13 +683,17 @@ class TerminalProcess {
   }
 
   write(data) {
+    if (this.closed) return false;
+    if (this.remote) return this.remote.send(this, "pty.write", { data_base64: Buffer.from(data).toString("base64") });
     if (this.ptyProcess) {
       this.ptyProcess.write(data);
-      return;
+      return true;
     }
     if (this.child?.stdin.writable) {
       this.child.stdin.write(data);
+      return true;
     }
+    return false;
   }
 
   resize(cols, rows) {
@@ -692,10 +702,15 @@ class TerminalProcess {
     this.cols = nextCols;
     this.rows = nextRows;
     if (this.ptyProcess) this.ptyProcess.resize(nextCols, nextRows);
+    this.remote?.send(this, "pty.resize", { cols: nextCols, rows: nextRows });
   }
 
   close() {
     this.closed = true;
+    if (this.remote) {
+      this.remote.terminals.delete(this);
+      if (!this.panel.runtime.closed) this.remote.closeTerminal(this.panel);
+    }
     if (this.ptyProcess) {
       this.ptyProcess.kill();
       this.ptyProcess = null;
@@ -722,6 +737,7 @@ class CmuxWindowsRuntime {
     this.windowTokens = new Map();
     this.surfaceRefs = new Map();
     this.terminals = new Map();
+    this.remoteWorkspaces = new Map();
     this.pendingPtyExits = new Set();
     this.pendingTerminalPrewarms = new Map();
     this.terminalMetadataTimer = null;
@@ -732,6 +748,9 @@ class CmuxWindowsRuntime {
     this.closed = false;
     this.sessionRepaired = false;
     this.state = this.loadSession();
+    for (const workspace of this.state.workspaces) {
+      if (workspace.remote) this.registerSshWorkspace(workspace);
+    }
     for (const window of this.state.windows) this.registerRendererWindow(window.id);
     if (this.sessionRepaired) this.persistSession();
   }
@@ -747,6 +766,7 @@ class CmuxWindowsRuntime {
         const titleSignatureBefore = parsed.workspaces.map((workspace) => workspaceTitle(workspace.title)).join("\0");
         const workspaces = repairWorkspaceTitles(parsed.workspaces.map((workspace) => ({
           ...workspace,
+          remote: workspace.remote ? require("./ssh-workspaces.cjs").validateSshConfig(workspace.remote) : undefined,
           color: Object.hasOwn(workspace, "color") ? normalizeWorkspaceColor(workspace.color, workspaceColors[0]) : workspaceColors[0],
           cwd: sanitizeDirectoryPath(workspace.cwd),
           panels: Array.isArray(workspace.panels) && workspace.panels.length > 0
@@ -917,6 +937,13 @@ class CmuxWindowsRuntime {
   }
 
   disposeWorkspaceTerminals(workspace) {
+    const remote = this.remoteWorkspaces.get(workspace.id);
+    if (remote) {
+      this.remoteWorkspaces.delete(workspace.id);
+      delete workspace.remote;
+      remote.proxy?.then(proxy => proxy.close()).catch(() => {});
+      void remote.stop().catch(error => process.stderr.write(`SSH workspace cleanup: ${error.message}\n`));
+    }
     for (const panel of workspace.panels) {
       this.terminals.get(panel.id)?.close();
       this.terminals.delete(panel.id);
@@ -948,6 +975,7 @@ class CmuxWindowsRuntime {
         windowId: workspace.windowId,
         layout: workspace.layout,
         browserAutomation: workspace.browserAutomation === true,
+        remote: workspace.remote,
         title: workspace.title,
         color: workspace.color,
         cwd: workspace.cwd,
@@ -971,6 +999,7 @@ class CmuxWindowsRuntime {
           url: panel.url,
           browserHistory: panel.browserHistory,
           agentSession: panel.agentSession,
+          remoteAttached: panel.remoteAttached,
           scrollback: panel.type === "terminal"
             ? plainScrollback((panel.scrollback || "") + "\n" + (this.terminals.get(panel.id)?.backlog || ""))
             : undefined
@@ -1062,11 +1091,13 @@ class CmuxWindowsRuntime {
     }
     const activePanel = panels.find(panel => panel.id === workspace.activePanelId);
     const cwd = activePanel?.cwd || workspace.cwd || firstTerminalCwd || defaultWorkspaceDirectory();
-    const branch = gitBranch(cwd);
+    const remote = this.remoteWorkspaces.get(workspace.id);
+    const branch = remote ? "" : gitBranch(cwd);
     return {
       id: workspace.id,
       layout: workspace.layout,
       browserAutomation: workspace.browserAutomation === true,
+      ssh: remote ? { destination: remote.config.destination, state: remote.state, error: remote.error } : undefined,
       title: workspace.title,
       color: workspace.color || "",
       activePanelId: workspace.activePanelId,
@@ -1124,7 +1155,7 @@ class CmuxWindowsRuntime {
     if (this.closed || panel?.type !== "terminal") return null;
     let terminal = this.terminals.get(panel.id);
     if (!terminal || terminal.closed) {
-      terminal = new TerminalProcess(panel);
+      terminal = new TerminalProcess(panel, { remote: this.remoteWorkspaces.get(panel.workspaceId) });
       this.terminals.set(panel.id, terminal);
       const exit = terminal.ptyExit;
       if (exit) {
@@ -1204,6 +1235,30 @@ class CmuxWindowsRuntime {
     return workspace;
   }
 
+  registerSshWorkspace(workspace) {
+    const { RemoteWorkspace } = require("./ssh-workspaces.cjs");
+    const remote = new RemoteWorkspace(workspace.remote);
+    this.remoteWorkspaces.set(workspace.id, remote);
+    remote.on("status", () => {
+      if (!this.closed && this.remoteWorkspaces.get(workspace.id) === remote) this.schedulePersistAndBroadcast();
+    });
+    return remote;
+  }
+
+  createSshWorkspace(options, windowId = this.state.windows[0].id) {
+    const { validateSshConfig } = require("./ssh-workspaces.cjs");
+    const config = validateSshConfig(options);
+    const workspace = this.newWorkspace(config.name || config.destination, { windowId });
+    workspace.remote = { ...config, slot: crypto.randomUUID() };
+    const remote = this.registerSshWorkspace(workspace);
+    this.state.workspaces.push(workspace);
+    this.setWindowFocus(windowId, workspace.id);
+    this.ensureTerminalProcess(workspace.panels[0]);
+    void remote.reconnect();
+    this.persistAndBroadcast();
+    return this.serializeWorkspace(workspace);
+  }
+
   createPanel(workspaceId, type, options = {}, runtimeOptions = {}) {
     const workspace = this.state.workspaces.find((candidate) => candidate.id === workspaceId)
       || this.activeWorkspace();
@@ -1253,6 +1308,7 @@ class CmuxWindowsRuntime {
     if (!found) return false;
     const targetWorkspace = this.state.workspaces.find((workspace) => workspace.id === targetWorkspaceId) || found.workspace;
     if (!targetWorkspace) return false;
+    if (targetWorkspace !== found.workspace && (targetWorkspace.remote || found.workspace.remote)) return false;
     if (beforePanelId === panelId) return true;
     found.workspace.panels = found.workspace.panels.filter((candidate) => candidate.id !== panelId);
     if (found.workspace.activePanelId === panelId) {
@@ -1273,7 +1329,7 @@ class CmuxWindowsRuntime {
     if(!target || !Array.isArray(panelIds) || !panelIds.length || new Set(panelIds).size!==panelIds.length || !panelIds.includes(activePanelId))return false;
     const found=panelIds.map(panelId=>this.findPanel(panelId));
     const source=found[0]?.workspace;
-    if(!source || source===target || found.some(item=>!item || item.workspace!==source))return false;
+    if(!source || source===target || source.remote || target.remote || found.some(item=>!item || item.workspace!==source))return false;
     const moving=new Set(panelIds);
     source.panels=source.panels.filter(panel=>!moving.has(panel.id));
     if(moving.has(source.activePanelId))source.activePanelId=source.panels[0]?.id || null;
@@ -1574,6 +1630,22 @@ class CmuxWindowsRuntime {
         const body = await readBody(request);
         if (!this.windowTokens.has(windowId)) return notFound();
         writeJSON(response, 200, this.serializeWorkspace(this.createWorkspaceFromOptions(body, { prewarmResponse: response, windowId })));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/workspaces/ssh") {
+        const body = await readBody(request);
+        if (!this.windowTokens.has(windowId)) return notFound();
+        writeJSON(response, 200, this.createSshWorkspace(body, windowId));
+        return;
+      }
+      const sshAction = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/ssh\/(disconnect|reconnect)$/);
+      if (request.method === "POST" && sshAction) {
+        if (!ownsWorkspace(sshAction[1])) return notFound();
+        const remote = this.remoteWorkspaces.get(sshAction[1]);
+        if (!remote) return notFound();
+        if (sshAction[2] === "disconnect") remote.disconnect();
+        else void remote.reconnect();
+        writeJSON(response, 200, { ok: true });
         return;
       }
       if (request.method === "PUT" && url.pathname === "/api/session/agent-resume") {
@@ -1994,6 +2066,14 @@ class CmuxWindowsRuntime {
         if (request.method === "browser.command") {
           return this.handleBrowserPipe(request, { scope: "panel", panelId, panelToken });
         }
+        if (request.method === "workspace.ssh") {
+          const found = this.findPanel(panelId);
+          const terminal = this.terminals.get(panelId);
+          if (!found || !terminal || terminal.closed || terminal.remote || terminal.panelToken !== panelToken) {
+            return jsonRpcErrorResponse(request.id, -32602, "Local terminal credential required");
+          }
+          return jsonRpcResponse(request.id, this.createSshWorkspace(request.params, found.workspace.windowId));
+        }
         if (request.method === "agent.session") {
           const terminal = this.terminals.get(panelId);
           const params = request.params || {};
@@ -2085,6 +2165,8 @@ class CmuxWindowsRuntime {
         return this.serializedState().workspaces;
       case "workspace.create":
         return this.serializeWorkspace(this.createWorkspaceFromOptions(params));
+      case "workspace.ssh":
+        return this.createSshWorkspace(params);
       case "workspace.update":
         return { ok: this.updateWorkspace(params.workspaceId || this.state.activeWorkspaceId, params) };
       case "workspace.rename":
@@ -2145,6 +2227,10 @@ class CmuxWindowsRuntime {
     }
     this.pendingTerminalPrewarms.clear();
     this.persistSession();
+    for (const remote of this.remoteWorkspaces.values()) {
+      remote.disconnect();
+      remote.proxy?.then(proxy => proxy.close()).catch(() => {});
+    }
     for (const terminal of this.terminals.values()) terminal.close();
     this.terminals.clear();
     for (const socket of this.eventSockets) socket.close();

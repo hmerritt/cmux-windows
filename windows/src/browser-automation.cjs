@@ -62,6 +62,7 @@ async function sendInput(contents, run) {
 
 async function perform(surfaces, panel, params, authorized, deadline) {
   const surface = surfaces.get(panel.id);
+  if (surface.remote) await surface.remote.ready;
   const { contents } = surface;
   const snapshot = () => inPage(contents, describePage, params.selector || "", surface.generation = (surface.generation || 0) + 1);
   const command = params.command;

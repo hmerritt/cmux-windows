@@ -26,12 +26,12 @@ function request(command, { scoped = false, timeout = 20000 } = {}) {
     let output = "";
     socket.setEncoding("utf8");
     socket.setTimeout(timeout, () => socket.destroy(new Error("request timed out")));
-    socket.on("connect", () => socket.write(auth + "\\n" + command + "\\n"));
+    socket.on("connect", () => socket.write(auth + "\n" + command + "\n"));
     socket.on("data", chunk => {
       output += chunk;
       if (output.length > 12 * 1024 * 1024) socket.destroy(new Error("response is too large"));
-      else if (output.includes("\\n")) {
-        resolve(output.slice(0, output.indexOf("\\n")));
+      else if (output.includes("\n")) {
+        resolve(output.slice(0, output.indexOf("\n")));
         socket.end();
       }
     });
@@ -50,11 +50,11 @@ async function rpc(method, params, options) {
 
 async function main() {
   if (["help", "--help", "-h"].includes(args[0])) {
-    process.stdout.write("cmux commands\\n  ping | list-workspaces | reset-session | new-workspace | new-terminal\\n  restart-terminal | browser-open | notify | send\\n  hooks setup codex|claude\\n  browser [--surface <surface>] <command>\\n  ssh <destination> [-p <port>] [-i <identity>] [--name <name>]\\n");
+    process.stdout.write("cmux commands\n  ping | list-workspaces | reset-session | new-workspace | new-terminal\n  restart-terminal | browser-open | notify | send\n  hooks setup codex|claude\n  browser [--surface <surface>] <command>\n  ssh <destination> [-p <port>] [-i <identity>] [--name <name>]\n");
     return;
   }
   if (args[0] === "hooks" && args[1] === "setup") {
-    process.stdout.write(setupAgentHooks(args[2], process.env.CMUX_WINDOWS_LAUNCHER) + "\\n");
+    process.stdout.write(setupAgentHooks(args[2], process.env.CMUX_WINDOWS_LAUNCHER) + "\n");
     return;
   }
   if (args[0] === "agent-hook") {
@@ -75,24 +75,24 @@ async function main() {
     const result = await rpc("browser.command", params);
     if (params.command === "screenshot" && output) {
       fs.writeFileSync(output, Buffer.from(result.png, "base64"));
-      process.stdout.write(output + "\\n");
+      process.stdout.write(output + "\n");
       return;
     }
-    process.stdout.write((typeof result === "string" && !json ? result : JSON.stringify(result)) + "\\n");
+    process.stdout.write((typeof result === "string" && !json ? result : JSON.stringify(result)) + "\n");
     return;
   }
   if (args[0] === "ssh") {
     const { parseSshArgs } = require("./ssh-workspaces.cjs");
     const result = await rpc("workspace.ssh", parseSshArgs(args.slice(1)));
-    process.stdout.write(JSON.stringify(result) + "\\n");
+    process.stdout.write(JSON.stringify(result) + "\n");
     return;
   }
   const response = await request(args.join(" ") || "ping");
-  process.stdout.write(response + "\\n");
+  process.stdout.write(response + "\n");
   if (response.startsWith("ERROR ")) process.exitCode = 1;
 }
 
 main().catch(error => {
-  process.stderr.write("cmux: " + error.message + "\\n");
+  process.stderr.write("cmux: " + error.message + "\n");
   process.exitCode = 1;
 });

@@ -1,4 +1,5 @@
-const { WebContentsView } = require("electron");
+const { WebContentsView, session } = require("electron");
+const { createSshProxy } = require("./ssh-proxy.cjs");
 
 function browserUrl(url) {
   const parsed = new URL(url);
@@ -16,6 +17,37 @@ class BrowserSurfaces {
     this.surfaces = new Map();
   }
 
+  remoteBrowser(workspaceId) {
+    const remote = this.runtime.remoteWorkspaces.get(workspaceId);
+    if (!remote) return null;
+    const partition = session.fromPartition(`persist:cmux-ssh-${workspaceId}`);
+    if (!remote.proxy) {
+      partition.webRequest.onBeforeRequest((details, reply) => {
+        reply({ cancel: remote.state !== "connected" && /^(https?|wss?):/i.test(details.url) });
+      });
+      remote.proxy = createSshProxy(remote);
+      remote.browserReady = remote.proxy.then(async proxy => {
+        await partition.setProxy({
+          mode: "fixed_servers", proxyRules: `http://127.0.0.1:${proxy.port}`, proxyBypassRules: "<-loopback>"
+        });
+        return proxy;
+      });
+      remote.browserReady.catch(() => {});
+    }
+    return { partition, ready: remote.browserReady };
+  }
+
+  authenticateProxy(contents, info, callback) {
+    if (!info.isProxy || info.host !== "127.0.0.1") return false;
+    const surface = [...this.surfaces.values()].find(item => item.contents === contents && item.remote);
+    if (!surface) return false;
+    surface.remote.ready.then(proxy => {
+      if (info.port === proxy.port && info.realm === proxy.realm) callback(proxy.username, proxy.password);
+      else callback();
+    }).catch(() => callback());
+    return true;
+  }
+
   find(panelId) {
     const found = this.runtime.findPanel(panelId);
     return found?.panel.type === "browser" ? found : null;
@@ -25,9 +57,10 @@ class BrowserSurfaces {
     if (this.surfaces.has(panelId)) return this.surfaces.get(panelId);
     const found = this.find(panelId);
     if (!found) throw new Error("Browser surface not found");
+    const remote = this.remoteBrowser(found.workspace.id);
     const view = new WebContentsView({
       webPreferences: {
-        partition: "persist:cmux-browser",
+        ...(remote ? { session: remote.partition } : { partition: "persist:cmux-browser" }),
         nodeIntegration: false,
         contextIsolation: true,
         sandbox: true
@@ -35,9 +68,10 @@ class BrowserSurfaces {
     });
     const contents = view.webContents;
     if (userAgent) contents.setUserAgent(userAgent);
-    const surface = { view, contents, panelId, owner: null, refs: new Map() };
+    const surface = { view, contents, panelId, owner: null, remote };
     this.surfaces.set(panelId, surface);
     this.configure(contents);
+    this.restrictRemote(surface);
     const emit = (event, details = {}) => {
       const current = this.find(panelId);
       if (!current || surface.owner?.isDestroyed() || !surface.owner) return;
@@ -54,7 +88,6 @@ class BrowserSurfaces {
         panel.browserHistory = { index: index - start, entries: entries.slice(start, start + 100) };
         this.runtime.schedulePersistSession();
       }
-      surface.refs.clear();
       emit("did-navigate", { url });
     };
     contents.on("did-navigate", navigate);
@@ -88,6 +121,14 @@ class BrowserSurfaces {
     if (surface.owner && !surface.owner.isDestroyed()) surface.owner.contentView.removeChildView(surface.view);
     surface.view.setVisible(false);
     surface.owner = null;
+    this.configure(surface.contents);
+    this.restrictRemote(surface);
+  }
+
+  restrictRemote({ contents, remote }) {
+    if (!remote || contents.isDestroyed()) return;
+    contents.setWindowOpenHandler(() => ({ action: "deny" }));
+    contents.setWebRTCIPHandlingPolicy?.("disable_non_proxied_udp");
   }
 
   reconcile() {
@@ -113,7 +154,10 @@ class BrowserSurfaces {
         surface.owner = window;
         window.contentView.addChildView(surface.view);
         this.configure(surface.contents, window.webContents);
+        this.restrictRemote(surface);
       }
+      if (surface.remote) await surface.remote.ready;
+      if (this.find(panelId)?.workspace.windowId !== windowId || surface.owner !== window) return null;
       const history = this.find(panelId)?.panel.browserHistory;
       if (!surface.restoring && !surface.contents.getURL() && Array.isArray(history?.entries) &&
           history.entries.length <= 100 && history.entries.every(entry => {
@@ -146,6 +190,8 @@ class BrowserSurfaces {
       }
       case "unmount": this.detach(surface); return true;
       case "navigate":
+        if (surface.remote) await surface.remote.ready;
+        if (this.find(panelId)?.workspace.windowId !== windowId || surface.owner !== window) return null;
         void contents.loadURL(browserUrl(value)).catch(() => {});
         return true;
       case "back": contents.navigationHistory.goBack(); return true;

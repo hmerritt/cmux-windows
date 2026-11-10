@@ -443,10 +443,14 @@ async function startRuntime() {
     windows,
     configure(contents, owner) {
       if (owner) browserGuestOwners.set(contents, owner);
+      else browserGuestOwners.delete(contents);
       hardenWebContents(contents);
       guardWebviewNavigation(contents);
       installCommandShortcutBridge(contents);
     }
+  });
+  app.on("login", (event, contents, _details, info, callback) => {
+    if (browserSurfaces.authenticateProxy(contents, info, callback)) event.preventDefault();
   });
   inProcessRuntime.onStateChanged = () => browserSurfaces.reconcile();
   inProcessRuntime.browserCommand = (panel, params, authorized) =>
