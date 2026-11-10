@@ -1,3 +1,4 @@
+import { createNativeBrowserView } from "./native-browser-view.mjs";
 import "./chrome.js";
 import {createInlineRename} from './inline-rename.mjs';
 const inlineRename=createInlineRename({errorText:()=>parityText('renameSaveError')});
@@ -150,7 +151,7 @@ import {
   paneTreeSignature,
   replacePaneTreePanelId,
   removePanelFromPaneTree,
-  savePaneTreeLayouts,
+  savePaneTreeLayouts as saveLocalPaneTreeLayouts,
   swapPaneTreePanelIds,
   updatePaneTreeSplit
 } from "./pane-tree.js";
@@ -7536,6 +7537,63 @@ function savePaneLayouts() {
   localStorage.setItem(paneLayoutStorageKey, JSON.stringify(payload));
 }
 
+const layoutSignatures = new Map();
+const layoutWrites = new Map();
+let layoutTimer;
+
+function savePaneTreeLayouts(trees) {
+  saveLocalPaneTreeLayouts(trees);
+  scheduleWorkspaceLayouts();
+}
+
+function scheduleWorkspaceLayouts() {
+  clearTimeout(layoutTimer);
+  layoutTimer = setTimeout(() => void flushWorkspaceLayouts(), 100);
+}
+
+async function flushWorkspaceLayouts() {
+  clearTimeout(layoutTimer);
+  await Promise.all((state.data?.workspaces || []).map(workspace => {
+    const body = JSON.stringify({
+      tree: state.paneTrees.get(workspace.id) || null,
+      groups: paneTabGroups.groups.filter(group => group.workspaceId === workspace.id)
+    });
+    const previous = layoutWrites.get(workspace.id);
+    if (layoutSignatures.get(workspace.id) === body) return previous;
+    layoutSignatures.set(workspace.id, body);
+    const next = Promise.resolve(previous)
+      .then(() => api(`/api/workspaces/${workspace.id}/layout`, { method: "PUT", body }))
+      .catch(() => {
+        if (layoutSignatures.get(workspace.id) === body) layoutSignatures.delete(workspace.id);
+      })
+      .finally(() => { if (layoutWrites.get(workspace.id) === next) layoutWrites.delete(workspace.id); });
+    layoutWrites.set(workspace.id, next);
+    return next;
+  }));
+}
+
+paneTabGroups.onSave = scheduleWorkspaceLayouts;
+
+function adoptWorkspaceLayouts(nextData, previousState) {
+  const previousIds = new Set(previousState?.workspaces.map(workspace => workspace.id));
+  const currentIds = new Set(nextData.workspaces.map(workspace => workspace.id));
+  for (const id of previousIds) {
+    if (!currentIds.has(id)) layoutSignatures.delete(id);
+  }
+  for (const workspace of nextData.workspaces) {
+    if (previousIds.has(workspace.id)) continue;
+    if (workspace.layout) {
+      const { tree, groups } = workspace.layout;
+      if (tree) state.paneTrees.set(workspace.id, tree);
+      else state.paneTrees.delete(workspace.id);
+      paneTabGroups.groups = paneTabGroups.groups.filter(group => group.workspaceId !== workspace.id).concat(groups);
+      layoutSignatures.set(workspace.id, JSON.stringify({ tree, groups }));
+    } else {
+      scheduleWorkspaceLayouts();
+    }
+  }
+}
+
 function cleanupPaneTrees() {
   const liveWorkspaceIds = new Set((state.data?.workspaces || []).map((workspace) => workspace.id));
   let changed = false;
@@ -10663,6 +10721,7 @@ function applyPendingTerminalFontSizesToState(nextData) {
 }
 
 function setAppState(nextData, { previousState = state.data, schedule = false } = {}) {
+  adoptWorkspaceLayouts(nextData, previousState);
   const protectedData = applyPendingTerminalFontSizesToState(
     applyPendingClosedPanelsToState(
       applyPendingPanelsToState(applyPendingFocusToState(nextData))
@@ -11296,6 +11355,11 @@ function createWorkspaceRow() {
     button.classList.add("is-workspace-dragging");
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", state.dragWorkspaceId);
+    if (window.cmuxNative?.beginWorkspaceDrag) {
+      const nonce = crypto.randomUUID();
+      event.dataTransfer.setData("application/x-cmux-workspace", nonce);
+      void flushWorkspaceLayouts().then(() => window.cmuxNative.beginWorkspaceDrag(button.dataset.workspaceId, nonce));
+    }
   });
   button.addEventListener("dragend", () => {
     button.classList.remove("is-workspace-dragging");
@@ -11307,7 +11371,8 @@ function createWorkspaceRow() {
     if (workspace) showWorkspaceContextMenu(event, workspace);
   });
   button.addEventListener("dragover", (event) => {
-    if (!state.dragPanelId && !state.dragWorkspaceId && !state.dragPaneTab) return;
+    if (!state.dragPanelId && !state.dragWorkspaceId && !state.dragPaneTab
+      && !event.dataTransfer?.types.includes("application/x-cmux-workspace")) return;
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
     clearWorkspaceListDropTarget();
@@ -11337,6 +11402,11 @@ function createWorkspaceRow() {
     else if (state.dragPanelId) movePanelToWorkspace(state.dragPanelId, targetWorkspaceId);
     else if (state.dragWorkspaceId && state.dragWorkspaceId !== targetWorkspaceId) {
       moveWorkspaceRelative(state.dragWorkspaceId, targetWorkspaceId, workspacePlacement);
+    } else if (!state.dragWorkspaceId) {
+      const beforeId = workspacePlacement === "after"
+        ? state.data.workspaces[state.data.workspaces.findIndex(workspace => workspace.id === targetWorkspaceId) + 1]?.id
+        : targetWorkspaceId;
+      dropWorkspaceFromAnotherWindow(event, beforeId);
     }
   });
   const close = button._workspaceParts.close;
@@ -11391,6 +11461,22 @@ function isWorkspaceRowEvent(event) {
   return Boolean(event.target?.closest?.(".workspace-row"));
 }
 
+async function dropWorkspaceFromAnotherWindow(event, beforeId) {
+  const nonce = event.dataTransfer?.getData("application/x-cmux-workspace");
+  if (nonce && !await window.cmuxNative?.dropWorkspace(nonce, beforeId)) toast(parityText("moveWindowFailed"));
+}
+
+async function moveWorkspaceToWindow(workspaceId, windowId) {
+  try {
+    await flushWorkspaceLayouts();
+    await api(`/api/workspaces/${workspaceId}/move-to-window`, {
+      method: "POST", body: JSON.stringify({ windowId })
+    });
+  } catch {
+    toast(parityText("moveWindowFailed"));
+  }
+}
+
 function workspaceListCanDropToEnd() {
   const workspaces = state.data?.workspaces || [];
   return Boolean(
@@ -11402,6 +11488,11 @@ function workspaceListCanDropToEnd() {
 }
 
 function handleWorkspaceListDragOver(event) {
+  if (!state.dragWorkspaceId && event.dataTransfer?.types.includes("application/x-cmux-workspace")) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    return;
+  }
   if (isWorkspaceRowEvent(event) || !workspaceListCanDropToEnd()) return;
   event.preventDefault();
   if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
@@ -11416,6 +11507,11 @@ function handleWorkspaceListDragLeave(event) {
 }
 
 function handleWorkspaceListDrop(event) {
+  if (!isWorkspaceRowEvent(event) && !state.dragWorkspaceId && event.dataTransfer?.types.includes("application/x-cmux-workspace")) {
+    event.preventDefault();
+    void dropWorkspaceFromAnotherWindow(event);
+    return;
+  }
   if (isWorkspaceRowEvent(event) || !workspaceListCanDropToEnd()) return;
   event.preventDefault();
   const workspaceId = state.dragWorkspaceId;
@@ -13905,6 +14001,7 @@ function cleanupPanel(panelId) {
     state.terminals.delete(panelId);
   }
   const browserSession = state.browserViews.get(panelId);
+  browserSession?.view.dispose?.();
   if (browserSession?.initialLoadFrame) cancelAnimationFrame(browserSession.initialLoadFrame);
   if (browserSession?.browserViewBoundsFrame) cancelAnimationFrame(browserSession.browserViewBoundsFrame);
   clearBrowserSuspendStop(browserSession);
@@ -15931,13 +16028,10 @@ function ensureBrowser(panel, body) {
 
   const content = document.createElement("div");
   content.className = "browser-content";
-  const view = document.createElement(window.cmuxNative?.electron ? "webview" : "iframe");
+  const view = window.cmuxNative?.browserSurface
+    ? createNativeBrowserView(panel.id, embeddedBrowserUserAgent())
+    : document.createElement("iframe");
   view.className = "browser-view";
-  if (view.tagName.toLowerCase() === "webview") {
-    view.setAttribute("partition", "persist:cmux-browser");
-    view.setAttribute("webpreferences", "contextIsolation=yes,nodeIntegration=no");
-    view.setAttribute("useragent", embeddedBrowserUserAgent());
-  }
   const initialBrowserUrl = normalizeUrl(address.value, state.settings.browserHomeUrl);
   const errorPane = document.createElement("div");
   errorPane.className = "browser-error";
@@ -15993,7 +16087,7 @@ function ensureBrowser(panel, body) {
   setTextIfChanged(deferredTitle, t("browser.pausedTitle"));
   setTextIfChanged(deferredAction, t("browser.pausedAction"));
   content.append(view, errorPane, loadingPane, deferredPane);
-  const isWebview = view.tagName.toLowerCase() === "webview";
+  const isWebview = Boolean(view.getWebContentsId);
   let webviewReady = !isWebview;
   let loadingStatusTimer = 0;
   let browserLoadTimer = 0;
@@ -38506,6 +38600,9 @@ function showWorkspaceContextMenu(event, workspace) {
   actions.append(
     contextMenuButton(isActive ? "Focused" : "Focus", () => focusWorkspace(workspace.id), isActive),
     renameWorkspaceAction,
+    ...(state.data?.windows || []).flatMap((window, index) => window.id === state.data.windowId ? [] : [
+      contextMenuButton(`${parityText("moveToWindow")} ${index + 1}`, () => moveWorkspaceToWindow(workspace.id, window.id))
+    ]),
     contextMenuButton("Change folder", () => chooseWorkspaceFolder(workspace), !workspace.id),
     contextMenuButton("Open folder", () => openWorkspaceFolder(workspace), !workspace.cwd),
     contextMenuButton("Copy setup", () => copyWorkspaceSetup(workspace)),
@@ -46169,6 +46266,7 @@ applySettings();
 window.cmuxNative?.onBeforeClose?.(async () => {
   if (state.focusSyncTimer) clearTimeout(state.focusSyncTimer);
   await flushFocusSync();
+  await flushWorkspaceLayouts();
   await api('/api/session/save', { method: 'POST' });
 });
 loadState();

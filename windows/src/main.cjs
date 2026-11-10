@@ -4,8 +4,8 @@ const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const readline = require("node:readline");
 const { formatMessage, t } = require("./i18n.cjs");
+const { BrowserSurfaces } = require("./browser-surfaces.cjs");
 const {ShortcutConfig} = require('./shortcut-config.cjs');
 const workspaceFiles=new (require('./workspace-files.cjs').WorkspaceFiles)({trash:target=>shell.trashItem(target)});
 const workspaceGit=new (require('./workspace-git.cjs').WorkspaceGit)();
@@ -15,23 +15,19 @@ const workspaceSearchRequests=new Map();
 const workspaceSearchRenderers=new WeakSet();
 const {ShortcutRouter, catalog} = require('../renderer/shortcut-engine.mjs');
 const {actionAvailable, actionPriority} = require('../renderer/shortcut-scopes.mjs');
-const separateWindow = process.argv.find(value=>value.startsWith('--cmux-window-id='))?.split('=')[1];
-if (separateWindow && /^[a-f0-9-]+$/.test(separateWindow)) {
-  app.setPath('userData', path.join(app.getPath('appData'),'cmux-windows',separateWindow));
-  process.env.CMUX_WINDOWS_PIPE = `\\\\.\\pipe\\cmux-windows-${separateWindow}`;
-  process.env.CMUX_WINDOWS_DATA_DIR = app.getPath('userData');
-}
 const shortcutConfig = new ShortcutConfig();
 const guestShortcutRouter = new ShortcutRouter([...catalog].sort((a,b)=>actionPriority(a.id)-actionPriority(b.id)));
 guestShortcutRouter.configure(shortcutConfig.settings);
 function publishShortcutSnapshot(snapshot) {
   if(!snapshot.error) guestShortcutRouter.configure(snapshot.settings);
-  mainWindow?.webContents.send('cmux-shortcuts-changed',snapshot);
+  for (const window of windows.values()) window.webContents.send('cmux-shortcuts-changed', snapshot);
   return snapshot;
 }
 
-let mainWindow = null;
-let runtimeChild = null;
+const windows = new Map();
+let runtimeInfo;
+let browserSurfaces;
+let quitting = false;
 let inProcessRuntime = null;
 let trustedRendererOrigin = "";
 let windowResizeSession = null;
@@ -39,12 +35,12 @@ const zoomLockedContents = new WeakSet();
 const navigationGuardedContents = new WeakSet();
 const commandShortcutContents = new WeakSet();
 const browserGuestOwners = new WeakMap();
+const workspaceDrags = new Map();
 
 const appRoot = path.resolve(__dirname, "..");
 const appName = "cmux";
 const appUserModelId = "com.cmux.windows";
 const appIconPath = path.join(__dirname, "assets", "cmux.ico");
-const serverProcessPath = path.join(__dirname, "server-process.cjs");
 const clipboardImageDataUrlLimitBytes = 2 * 1024 * 1024;
 const windowResizeEdges = new Set([
   "top",
@@ -96,8 +92,7 @@ function lockWebContentsZoom(contents) {
 }
 
 function sendCmuxCommand(commandId) {
-  if (!mainWindow || mainWindow.isDestroyed?.()) return;
-  mainWindow.webContents.send("cmux-command", commandId);
+  BrowserWindow.getFocusedWindow()?.webContents.send("cmux-command", commandId);
 }
 
 function installCommandShortcutBridge(contents) {
@@ -112,12 +107,13 @@ function installCommandShortcutBridge(contents) {
     }
     // Host renderer owns terminal/input contexts. Guests cannot bubble keys to
     // it, so use the same matcher here and forward only recognized app actions.
-    if (browserGuestOwners.get(contents)!==mainWindow?.webContents || input.type!=='keyDown' || altGraph) return;
+    const owner = browserGuestOwners.get(contents);
+    if (!owner || owner.isDestroyed() || input.type!=='keyDown' || altGraph) return;
     const context={browserFocus:true,terminalFocus:false,appFocus:true,sidebarFocus:false,commandPaletteVisible:false};
     const result=guestShortcutRouter.handle({key:input.key,code:input.code,ctrlKey:input.control,altKey:input.alt,shiftKey:input.shift,metaKey:input.meta,repeat:input.isAutoRepeat,isComposing:input.isComposing},context,actionAvailable);
     if(!result) return;
     event.preventDefault();
-    if(result.id) mainWindow?.webContents.send('cmux-shortcut',{...result,guestId:contents.id});
+    if(result.id) owner.send('cmux-shortcut',{...result,guestId:contents.id});
   });
 }
 
@@ -146,22 +142,6 @@ function hardenWebContents(contents) {
   if (typeof contents?.setWindowOpenHandler === "function") {
     contents.setWindowOpenHandler(externalWindowOpenHandler);
   }
-}
-
-function hardenWebviewPreferences(webPreferences = {}) {
-  delete webPreferences.preload;
-  delete webPreferences.preloadURL;
-  webPreferences.nodeIntegration = false;
-  webPreferences.nodeIntegrationInSubFrames = false;
-  webPreferences.contextIsolation = true;
-  webPreferences.sandbox = true;
-  webPreferences.webSecurity = true;
-  webPreferences.allowRunningInsecureContent = false;
-}
-
-function isAllowedWebviewInitialUrl(url) {
-  if (!url) return true;
-  return /^https?:\/\//i.test(url) || url === "about:blank";
 }
 
 function isAllowedWebviewNavigationUrl(url) {
@@ -194,24 +174,9 @@ function guardWebviewNavigation(webContents) {
   });
 }
 
-function attachWebviewHardening(contents) {
-  contents.on("will-attach-webview", (event, webPreferences, params = {}) => {
-    hardenWebviewPreferences(webPreferences);
-    if (!isAllowedWebviewInitialUrl(params.src || "")) {
-      event.preventDefault();
-      log(`blocked webview attach url=${params.src || ""}`);
-    }
-  });
-  contents.on("did-attach-webview", (_event, webContents) => {
-    browserGuestOwners.set(webContents,contents);
-    hardenWebContents(webContents);
-    guardWebviewNavigation(webContents);
-    installCommandShortcutBridge(webContents);
-  });
-}
-
 function isTrustedIpcEvent(event) {
-  if (!event || !mainWindow || event.sender !== mainWindow.webContents || !trustedRendererOrigin) return false;
+  if (!event || !event.sender.cmuxWindowId || !trustedRendererOrigin || event.senderFrame?.parent) return false;
+  if (windows.get(event.sender.cmuxWindowId)?.webContents !== event.sender) return false;
   const frameUrl = event.senderFrame?.url || event.sender.getURL?.() || "";
   try {
     return new URL(frameUrl).origin === trustedRendererOrigin;
@@ -252,7 +217,7 @@ function windowResizePoint(point) {
   return { x, y };
 }
 
-function beginWindowResize(edge, point) {
+function beginWindowResize(mainWindow, edge, point) {
   const normalizedEdge = normalizeWindowResizeEdge(edge);
   const start = windowResizePoint(point);
   if (!mainWindow || !normalizedEdge || !start || mainWindow.isMaximized() || mainWindow.isFullScreen?.()) {
@@ -263,6 +228,7 @@ function beginWindowResize(edge, point) {
     ? mainWindow.getMinimumSize()
     : [480, 400];
   windowResizeSession = {
+    window: mainWindow,
     edge: normalizedEdge,
     start,
     bounds: mainWindow.getBounds(),
@@ -304,8 +270,8 @@ function windowResizeBoundsForPoint(point) {
   return next;
 }
 
-function continueWindowResize(point) {
-  if (!mainWindow || !windowResizeSession || mainWindow.isDestroyed?.()) return;
+function continueWindowResize(mainWindow, point) {
+  if (!mainWindow || windowResizeSession?.window !== mainWindow || mainWindow.isDestroyed()) return;
   const bounds = windowResizeBoundsForPoint(point);
   if (!bounds) return;
   mainWindow.setBounds(bounds, false);
@@ -454,104 +420,22 @@ async function openUrlInBrowserProfile(url, profileId = "system") {
   }
 }
 
-async function startInProcessRuntime(reason) {
-  if (reason) log(reason);
-  const { createCmuxWindowsRuntime } = require("./server.cjs");
-  inProcessRuntime = createCmuxWindowsRuntime({
-    staticDir: path.join(appRoot, "renderer")
-  });
-  return await inProcessRuntime.listen();
-}
-
-function spawnRuntimeProcess() {
-  return new Promise((resolve, reject) => {
-    const configuredStartupTimeoutMs = process.env.CMUX_RUNTIME_STARTUP_TIMEOUT
-      ? Number(process.env.CMUX_RUNTIME_STARTUP_TIMEOUT)
-      : NaN;
-    const startupTimeoutMs = Number.isFinite(configuredStartupTimeoutMs)
-      ? Math.max(1000, configuredStartupTimeoutMs)
-      : 15000;
-    const nodeExe = process.env.CMUX_WINDOWS_NODE || "node";
-    const child = spawn(nodeExe, [serverProcessPath], {
-      cwd: appRoot,
-      env: {
-        ...process.env,
-        CMUX_WINDOWS_STATIC_DIR: path.join(appRoot, "renderer")
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true
-    });
-
-    let settled = false;
-    const stderr = [];
-    let startupTimer = null;
-
-    const cleanup = () => {
-      if (startupTimer) {
-        clearTimeout(startupTimer);
-        startupTimer = null;
-      }
-      readyReader.close();
-      child.removeListener("error", onError);
-      child.removeListener("exit", onExit);
-    };
-
-    const settleReject = (error) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(error);
-    };
-
-    const readyReader = readline.createInterface({ input: child.stdout });
-    readyReader.on("line", (line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return;
-      try {
-        const message = JSON.parse(trimmed);
-        if (message.type === "ready") {
-          settled = true;
-          cleanup();
-          runtimeChild = child;
-          resolve({ url: message.url, port: message.port, pipeName: message.pipeName, launchToken: message.launchToken });
-        }
-      } catch {
-        console.log(`[cmux-windows-runtime] ${trimmed}`);
-      }
-    });
-
-    child.stderr.on("data", (chunk) => {
-      const text = chunk.toString();
-      stderr.push(text);
-      console.error(`[cmux-windows-runtime] ${text.trimEnd()}`);
-    });
-
-    const onError = (error) => settleReject(error);
-
-    const onExit = (code, signal) => {
-      settleReject(new Error(`runtime exited before ready: code=${code} signal=${signal} ${stderr.join("")}`));
-    };
-
-    child.on("error", onError);
-    child.on("exit", onExit);
-    startupTimer = setTimeout(() => {
-      if (child && !child.killed) child.kill();
-      settleReject(new Error("runtime startup timed out"));
-    }, startupTimeoutMs);
-  });
-}
-
 async function startRuntime() {
-  if (app.isPackaged && !process.env.CMUX_WINDOWS_NODE) {
-    return await startInProcessRuntime("using in-process runtime for packaged app");
-  }
-  try {
-    return await spawnRuntimeProcess();
-  } catch (error) {
-    log(`runtime process unavailable: ${error?.message || error}`);
-    console.warn("Falling back to in-process runtime.");
-    return await startInProcessRuntime();
-  }
+  const { createCmuxWindowsRuntime } = require("./server.cjs");
+  inProcessRuntime = createCmuxWindowsRuntime({ staticDir: path.join(appRoot, "renderer") });
+  browserSurfaces = new BrowserSurfaces({
+    runtime: inProcessRuntime,
+    windows,
+    configure(contents, owner) {
+      if (owner) browserGuestOwners.set(contents, owner);
+      hardenWebContents(contents);
+      guardWebviewNavigation(contents);
+      installCommandShortcutBridge(contents);
+    }
+  });
+  inProcessRuntime.onStateChanged = () => browserSurfaces.reconcile();
+  runtimeInfo = await inProcessRuntime.listen();
+  trustedRendererOrigin = new URL(runtimeInfo.url).origin;
 }
 
 function buildMenu() {
@@ -559,23 +443,23 @@ function buildMenu() {
     {
       label: t("menu.file"),
       submenu: [
-        { label: t("menu.newWorkspace"), accelerator: "Ctrl+N", click: () => mainWindow?.webContents.send("cmux-command", "workspace.new") },
-        { label: t("menu.renameWorkspace"), click: () => mainWindow?.webContents.send("cmux-command", "workspace.rename") },
-        { label: t("menu.workspaceBlueprints"), click: () => mainWindow?.webContents.send("cmux-command", "settings.blueprints") },
-        { label: t("menu.newTerminal"), accelerator: "Ctrl+T", click: () => mainWindow?.webContents.send("cmux-command", "terminal.new") },
-        { label: t("menu.runCommand"), accelerator: "Ctrl+Shift+Enter", click: () => mainWindow?.webContents.send("cmux-command", "terminal.runCommand") },
-        { label: t("menu.reopenClosedPane"), accelerator: "Ctrl+Shift+T", click: () => mainWindow?.webContents.send("cmux-command", "terminal.reopenClosed") },
-        { label: t("menu.copyTerminalSelection"), accelerator: "Ctrl+Shift+C", click: () => mainWindow?.webContents.send("cmux-command", "terminal.copySelection") },
-        { label: t("menu.pasteClipboard"), accelerator: "Ctrl+Shift+V", click: () => mainWindow?.webContents.send("cmux-command", "terminal.pasteClipboard") },
-        { label: t("menu.restartTerminal"), accelerator: "Ctrl+Shift+R", click: () => mainWindow?.webContents.send("cmux-command", "terminal.restart") },
-        { label: t("menu.closeActivePane"), accelerator: "Ctrl+W", click: () => mainWindow?.webContents.send("cmux-command", "terminal.close") },
-        { label: t("menu.openBrowser"), accelerator: "Ctrl+Shift+L", click: () => mainWindow?.webContents.send("cmux-command", "browser.new") },
+        { label: t("menu.newWorkspace"), accelerator: "Ctrl+N", click: () => sendCmuxCommand("workspace.new") },
+        { label: t("menu.renameWorkspace"), click: () => sendCmuxCommand("workspace.rename") },
+        { label: t("menu.workspaceBlueprints"), click: () => sendCmuxCommand("settings.blueprints") },
+        { label: t("menu.newTerminal"), accelerator: "Ctrl+T", click: () => sendCmuxCommand("terminal.new") },
+        { label: t("menu.runCommand"), accelerator: "Ctrl+Shift+Enter", click: () => sendCmuxCommand("terminal.runCommand") },
+        { label: t("menu.reopenClosedPane"), accelerator: "Ctrl+Shift+T", click: () => sendCmuxCommand("terminal.reopenClosed") },
+        { label: t("menu.copyTerminalSelection"), accelerator: "Ctrl+Shift+C", click: () => sendCmuxCommand("terminal.copySelection") },
+        { label: t("menu.pasteClipboard"), accelerator: "Ctrl+Shift+V", click: () => sendCmuxCommand("terminal.pasteClipboard") },
+        { label: t("menu.restartTerminal"), accelerator: "Ctrl+Shift+R", click: () => sendCmuxCommand("terminal.restart") },
+        { label: t("menu.closeActivePane"), accelerator: "Ctrl+W", click: () => sendCmuxCommand("terminal.close") },
+        { label: t("menu.openBrowser"), accelerator: "Ctrl+Shift+L", click: () => sendCmuxCommand("browser.new") },
         { type: "separator" },
         { label: t("menu.settings"), accelerator: "Ctrl+,", click: () => sendCmuxCommand("settings.open") },
-        { label: t("menu.colorSettings"), click: () => mainWindow?.webContents.send("cmux-command", "settings.colors") },
-        { label: t("menu.backgroundSettings"), click: () => mainWindow?.webContents.send("cmux-command", "settings.backgrounds") },
-        { label: t("menu.settingsProfiles"), click: () => mainWindow?.webContents.send("cmux-command", "settings.profiles") },
-        { label: t("menu.commandSnippets"), click: () => mainWindow?.webContents.send("cmux-command", "settings.commands") },
+        { label: t("menu.colorSettings"), click: () => sendCmuxCommand("settings.colors") },
+        { label: t("menu.backgroundSettings"), click: () => sendCmuxCommand("settings.backgrounds") },
+        { label: t("menu.settingsProfiles"), click: () => sendCmuxCommand("settings.profiles") },
+        { label: t("menu.commandSnippets"), click: () => sendCmuxCommand("settings.commands") },
         { type: "separator" },
         { role: "quit" }
       ]
@@ -583,9 +467,9 @@ function buildMenu() {
     {
       label: t("menu.edit"),
       submenu: [
-        { label: t("menu.findTerminal"), accelerator: "Ctrl+F", click: () => mainWindow?.webContents.send("cmux-command", "terminal.find") },
-        { label: t("menu.findNext"), accelerator: "F3", click: () => mainWindow?.webContents.send("cmux-command", "terminal.findNext") },
-        { label: t("menu.findPrevious"), accelerator: "Shift+F3", click: () => mainWindow?.webContents.send("cmux-command", "terminal.findPrevious") },
+        { label: t("menu.findTerminal"), accelerator: "Ctrl+F", click: () => sendCmuxCommand("terminal.find") },
+        { label: t("menu.findNext"), accelerator: "F3", click: () => sendCmuxCommand("terminal.findNext") },
+        { label: t("menu.findPrevious"), accelerator: "Shift+F3", click: () => sendCmuxCommand("terminal.findPrevious") },
         { type: "separator" },
         { role: "undo" },
         { role: "redo" },
@@ -599,18 +483,18 @@ function buildMenu() {
     {
       label: t("menu.view"),
       submenu: [
-        { label: t("menu.commandPalette"), accelerator: "Ctrl+Shift+P", click: () => mainWindow?.webContents.send("cmux-command", "palette.toggle") },
-        { label: t("menu.toggleSidebar"), accelerator: "Ctrl+B", click: () => mainWindow?.webContents.send("cmux-command", "sidebar.toggle") },
+        { label: t("menu.commandPalette"), accelerator: "Ctrl+Shift+P", click: () => sendCmuxCommand("palette.toggle") },
+        { label: t("menu.toggleSidebar"), accelerator: "Ctrl+B", click: () => sendCmuxCommand("sidebar.toggle") },
         { type: "separator" },
-        { label: t("menu.nextPane"), accelerator: "Ctrl+Tab", click: () => mainWindow?.webContents.send("cmux-command", "terminal.nextPane") },
-        { label: t("menu.previousPane"), accelerator: "Ctrl+Shift+Tab", click: () => mainWindow?.webContents.send("cmux-command", "terminal.previousPane") },
-        { label: t("menu.lastPane"), accelerator: "Ctrl+Shift+Backspace", click: () => mainWindow?.webContents.send("cmux-command", "terminal.lastPane") },
-        { label: t("menu.nextWorkspace"), accelerator: "Ctrl+PageDown", click: () => mainWindow?.webContents.send("cmux-command", "workspace.next") },
-        { label: t("menu.previousWorkspace"), accelerator: "Ctrl+PageUp", click: () => mainWindow?.webContents.send("cmux-command", "workspace.previous") },
-        { label: t("menu.lastWorkspace"), accelerator: "Ctrl+Alt+Backspace", click: () => mainWindow?.webContents.send("cmux-command", "workspace.last") },
+        { label: t("menu.nextPane"), accelerator: "Ctrl+Tab", click: () => sendCmuxCommand("terminal.nextPane") },
+        { label: t("menu.previousPane"), accelerator: "Ctrl+Shift+Tab", click: () => sendCmuxCommand("terminal.previousPane") },
+        { label: t("menu.lastPane"), accelerator: "Ctrl+Shift+Backspace", click: () => sendCmuxCommand("terminal.lastPane") },
+        { label: t("menu.nextWorkspace"), accelerator: "Ctrl+PageDown", click: () => sendCmuxCommand("workspace.next") },
+        { label: t("menu.previousWorkspace"), accelerator: "Ctrl+PageUp", click: () => sendCmuxCommand("workspace.previous") },
+        { label: t("menu.lastWorkspace"), accelerator: "Ctrl+Alt+Backspace", click: () => sendCmuxCommand("workspace.last") },
         { type: "separator" },
-        { label: t("menu.tunePerformance"), click: () => mainWindow?.webContents.send("cmux-command", "settings.tunePerformance") },
-        { label: t("menu.performanceSettings"), click: () => mainWindow?.webContents.send("cmux-command", "settings.performance") },
+        { label: t("menu.tunePerformance"), click: () => sendCmuxCommand("settings.tunePerformance") },
+        { label: t("menu.performanceSettings"), click: () => sendCmuxCommand("settings.performance") },
         { type: "separator" },
         { role: "reload" },
         { role: "toggleDevTools" }
@@ -628,12 +512,10 @@ function buildMenu() {
   return Menu.buildFromTemplate(template);
 }
 
-async function createWindow() {
-  const runtime = await startRuntime();
-  Menu.setApplicationMenu(buildMenu());
+async function createWindow(owner = inProcessRuntime.createWindow()) {
   const bounds = initialWindowBounds();
 
-  mainWindow = new BrowserWindow({
+  const mainWindow = new BrowserWindow({
     ...bounds,
     minWidth: 480,
     minHeight: 400,
@@ -647,9 +529,15 @@ async function createWindow() {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
-      webviewTag: true
+      sandbox: true
     }
+  });
+
+  windows.set(owner.id, mainWindow);
+  mainWindow.webContents.cmuxWindowId = owner.id;
+  mainWindow.once("closed", () => {
+    windows.delete(owner.id);
+    if (!quitting && windows.size) inProcessRuntime.closeWindow(owner.id);
   });
 
   let sessionFlushed = false;
@@ -666,7 +554,7 @@ async function createWindow() {
     };
     sessionFlushTimer = setTimeout(finish, 2000);
     const flushListener = reply => {
-      if (isTrustedIpcEvent(reply)) finish();
+      if (reply.sender === mainWindow.webContents && isTrustedIpcEvent(reply)) finish();
     };
     ipcMain.on('session:flushed', flushListener);
     mainWindow.webContents.send('session:flush');
@@ -678,7 +566,6 @@ async function createWindow() {
   mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
     log(`did-fail-load code=${errorCode} description=${errorDescription} url=${validatedURL}`);
   });
-  attachWebviewHardening(mainWindow.webContents);
   installCommandShortcutBridge(mainWindow.webContents);
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
     log(`render-process-gone ${JSON.stringify(details)}`);
@@ -686,18 +573,13 @@ async function createWindow() {
   hardenWebContents(mainWindow.webContents);
   mainWindow.on("maximize", () => mainWindow?.webContents.send("window-state", { maximized: true }));
   mainWindow.on("unmaximize", () => mainWindow?.webContents.send("window-state", { maximized: false }));
-  const launchUrl = new URL(runtime.url);
+  const launchUrl = new URL(runtimeInfo.url);
   launchUrl.searchParams.set("locale", process.env.CMUX_WINDOWS_LOCALE || app.getLocale());
-  if (runtime.launchToken) launchUrl.searchParams.set("token", runtime.launchToken);
-  trustedRendererOrigin = launchUrl.origin;
+  launchUrl.searchParams.set("token", owner.token);
   await mainWindow.loadURL(launchUrl.href);
 }
 
 function stopRuntime(event) {
-  if (runtimeChild && !runtimeChild.killed) {
-    runtimeChild.kill();
-    runtimeChild = null;
-  }
   const runtime = inProcessRuntime;
   if (!runtime) return;
   // Keep Electron's Node environment alive while ConPTY delivers its exit callbacks.
@@ -718,11 +600,13 @@ if (!hasLock) {
   app.setName(appName);
   if (process.platform === "win32") app.setAppUserModelId(appUserModelId);
 
-  ipcMain.handle("window:minimize", trustedIpcHandler(() => {
+  ipcMain.handle("window:minimize", trustedIpcHandler(event => {
+    const mainWindow = BrowserWindow.fromWebContents(event.sender);
     mainWindow?.minimize();
     return true;
   }, false));
-  ipcMain.handle("window:toggle-maximize", trustedIpcHandler(() => {
+  ipcMain.handle("window:toggle-maximize", trustedIpcHandler(event => {
+    const mainWindow = BrowserWindow.fromWebContents(event.sender);
     if (!mainWindow) return false;
     if (mainWindow.isMaximized()) {
       mainWindow.unmaximize();
@@ -731,7 +615,8 @@ if (!hasLock) {
     }
     return mainWindow.isMaximized();
   }, false));
-  ipcMain.handle("window:close", trustedIpcHandler(() => {
+  ipcMain.handle("window:close", trustedIpcHandler(event => {
+    const mainWindow = BrowserWindow.fromWebContents(event.sender);
     mainWindow?.close();
     return true;
   }, false));
@@ -787,18 +672,33 @@ if (!hasLock) {
   ipcMain.handle('git:diff',trustedIpcHandler(async(_event,root,filePath,options)=>{
     try{return {ok:true,...await workspaceGit.diff(root,filePath,options)};}catch(error){return {ok:false,error:error.message};}
   },null));
-  app.on('accessibility-support-changed',(_event,enabled)=>mainWindow?.webContents.send('cmux-accessibility',enabled));
+  app.on('accessibility-support-changed', (_event, enabled) => {
+    for (const window of windows.values()) window.webContents.send('cmux-accessibility', enabled);
+  });
   ipcMain.handle('shortcuts:update', trustedIpcHandler((_event,id,value,reset)=>publishShortcutSnapshot(shortcutConfig.update(id,value,reset)),null));
   ipcMain.handle('shortcuts:reload', trustedIpcHandler(()=>publishShortcutSnapshot(shortcutConfig.reload()),null));
-  ipcMain.handle('shortcut:native', trustedIpcHandler(async (_event,action,guestId)=>{
+  ipcMain.handle("workspace:drag", trustedIpcHandler((event, workspaceId, nonce) => {
+    const windowId = event.sender.cmuxWindowId;
+    if (!/^[a-f0-9-]{36}$/i.test(nonce) ||
+        !inProcessRuntime.workspacesForWindow(windowId).some(workspace => workspace.id === workspaceId)) return false;
+    workspaceDrags.set(windowId, { nonce, workspaceId, expires: Date.now() + 60000 });
+    return true;
+  }, false));
+  ipcMain.handle("workspace:drop", trustedIpcHandler((event, nonce, beforeId) => {
+    const source = [...workspaceDrags].find(([, drag]) => drag.nonce === nonce && drag.expires >= Date.now());
+    if (!source) return false;
+    const [sourceId, drag] = source;
+    workspaceDrags.delete(sourceId);
+    return inProcessRuntime.moveWorkspaceToWindow(drag.workspaceId, sourceId, event.sender.cmuxWindowId, beforeId);
+  }, false));
+  ipcMain.handle('shortcut:native', trustedIpcHandler(async (event,action,guestId)=>{
+    const mainWindow = BrowserWindow.fromWebContents(event.sender);
     if(action==='quit') { app.quit(); return true; }
     if(action==='closeWindow') { mainWindow?.close(); return true; }
     if(action==='toggleFullScreen') { mainWindow?.setFullScreen(!mainWindow.isFullScreen()); return true; }
-    if(action==='newWindow') {
-      const id=require('node:crypto').randomUUID();
-      const args=app.isPackaged?[]:[appRoot];
-      const child=spawn(process.execPath,[...args,`--cmux-window-id=${id}`],{detached:true,stdio:'ignore',windowsHide:true,env:{...process.env,ELECTRON_RUN_AS_NODE:''}});
-      child.unref(); return true;
+    if (action === "newWindow") {
+      await createWindow();
+      return true;
     }
     const guest=Number.isInteger(guestId)?require('electron').webContents.fromId(guestId):null;
     if(!guest || browserGuestOwners.get(guest)!==mainWindow?.webContents) return false;
@@ -815,13 +715,15 @@ if (!hasLock) {
     return true;
   },false));
   shortcutConfig.watch(publishShortcutSnapshot);
-  ipcMain.handle("window:is-maximized", trustedIpcHandler(() => Boolean(mainWindow?.isMaximized()), false));
-  ipcMain.on("window:begin-resize", trustedIpcListener((_event, edge, point) => beginWindowResize(edge, point)));
-  ipcMain.on("window:resize", trustedIpcListener((_event, point) => continueWindowResize(point)));
+  ipcMain.handle("window:is-maximized", trustedIpcHandler(event => Boolean(BrowserWindow.fromWebContents(event.sender)?.isMaximized()), false));
+  ipcMain.on("window:begin-resize", trustedIpcListener((event, edge, point) => beginWindowResize(BrowserWindow.fromWebContents(event.sender), edge, point)));
+  ipcMain.on("window:resize", trustedIpcListener((event, point) => continueWindowResize(BrowserWindow.fromWebContents(event.sender), point)));
   ipcMain.on("window:end-resize", trustedIpcListener(() => {
     windowResizeSession = null;
   }));
   ipcMain.handle("open-external", trustedIpcHandler((_event, url, profileId = "system") => openUrlInBrowserProfile(url, profileId), { ok: false, error: "forbidden" }));
+  ipcMain.handle("browser:surface", trustedIpcHandler((event, panelId, action, value) =>
+    browserSurfaces.rendererAction(event.sender.cmuxWindowId, panelId, action, value), null));
   ipcMain.handle("browser:profiles", trustedIpcHandler(() => publicBrowserProfiles(), []));
   ipcMain.handle("open-path", trustedIpcHandler(async (_event, filePath) => {
     if (typeof filePath !== "string" || !filePath.trim()) return { ok: false, error: "missing path" };
@@ -844,7 +746,8 @@ if (!hasLock) {
     }
     return { ok: true, dataUrl };
   }, { ok: false, error: "forbidden" }));
-  ipcMain.handle("background:pick-image", trustedIpcHandler(async () => {
+  ipcMain.handle("background:pick-image", trustedIpcHandler(async event => {
+    const mainWindow = BrowserWindow.fromWebContents(event.sender);
     if (!mainWindow) return "";
     const result = await dialog.showOpenDialog(mainWindow, {
       title: t("dialog.chooseBackground"),
@@ -856,7 +759,8 @@ if (!hasLock) {
     const filePath = result.canceled ? "" : result.filePaths[0];
     return filePath ? pathToFileURL(filePath).href : "";
   }, ""));
-  ipcMain.handle("workspace:pick-folder", trustedIpcHandler(async () => {
+  ipcMain.handle("workspace:pick-folder", trustedIpcHandler(async event => {
+    const mainWindow = BrowserWindow.fromWebContents(event.sender);
     if (!mainWindow) return "";
     const result = await dialog.showOpenDialog(mainWindow, {
       title: t("dialog.chooseWorkspaceFolder"),
@@ -866,6 +770,7 @@ if (!hasLock) {
   }, ""));
 
   app.on("second-instance", () => {
+    const mainWindow = BrowserWindow.getFocusedWindow() || windows.values().next().value;
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
@@ -873,7 +778,15 @@ if (!hasLock) {
 
   app.on("web-contents-created", (_event, contents) => hardenWebContents(contents));
 
-  app.whenReady().then(createWindow);
+  app.whenReady().then(async () => {
+    await startRuntime();
+    Menu.setApplicationMenu(buildMenu());
+    for (const owner of inProcessRuntime.state.windows) await createWindow(inProcessRuntime.rendererWindow(owner.id));
+  }).catch(error => {
+    console.error(error);
+    app.quit();
+  });
+  app.on("before-quit", () => { quitting = true; });
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
   });

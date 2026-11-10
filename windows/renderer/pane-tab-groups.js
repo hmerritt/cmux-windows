@@ -9,7 +9,10 @@ export class PaneTabGroups {
       this.groups = Array.isArray(saved) ? saved.filter(group => typeof group.workspaceId === 'string' && Array.isArray(group.members) && group.members.every(id => typeof id === 'string')) : [];
     } catch { this.groups = []; }
   }
-  save() { this.storage.setItem('cmux.paneTabGroups', JSON.stringify(this.groups)); }
+  save() {
+    this.storage.setItem('cmux.paneTabGroups', JSON.stringify(this.groups));
+    this.onSave?.();
+  }
   groupFor(panelId) { return this.groups.find(group => group.members.includes(panelId)); }
   add(workspaceId, anchorId, panelId) {
     let group = this.groupFor(anchorId);

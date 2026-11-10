@@ -630,6 +630,7 @@ class TerminalProcess {
       } catch {
         return;
       }
+      if (socket.windowId && this.panel.runtime.findPanel(this.panel.id)?.workspace.windowId !== socket.windowId) return;
       if (message.type === "input" && typeof message.data === "string") {
         this.write(message.data);
       }
@@ -711,6 +712,7 @@ class CmuxWindowsRuntime {
     this.pipeServer = null;
     this.wss = new WebSocketServer({ noServer: true });
     this.eventSockets = new Set();
+    this.windowTokens = new Map();
     this.terminals = new Map();
     this.pendingPtyExits = new Set();
     this.pendingTerminalPrewarms = new Map();
@@ -722,6 +724,7 @@ class CmuxWindowsRuntime {
     this.closed = false;
     this.sessionRepaired = false;
     this.state = this.loadSession();
+    for (const window of this.state.windows) this.registerRendererWindow(window.id);
     if (this.sessionRepaired) this.persistSession();
   }
 
@@ -732,7 +735,7 @@ class CmuxWindowsRuntime {
   loadSession() {
     try {
       const parsed = JSON.parse(fs.readFileSync(this.sessionFile, "utf8"));
-      if (Array.isArray(parsed.workspaces) && parsed.workspaces.length > 0) {
+      if (Array.isArray(parsed.workspaces)) {
         const titleSignatureBefore = parsed.workspaces.map((workspace) => workspaceTitle(workspace.title)).join("\0");
         const workspaces = repairWorkspaceTitles(parsed.workspaces.map((workspace) => ({
           ...workspace,
@@ -759,9 +762,11 @@ class CmuxWindowsRuntime {
         })));
         const titleSignatureAfter = workspaces.map((workspace) => workspace.title).join("\0");
         this.sessionRepaired = titleSignatureBefore !== titleSignatureAfter;
+        const windows = this.restoreWindowOwners(parsed.windows, workspaces, parsed.activeWorkspaceId);
         return {
-          activeWorkspaceId: parsed.activeWorkspaceId || parsed.workspaces[0].id,
+          activeWorkspaceId: windows[0].activeWorkspaceId,
           rendererPort: sanitizeRendererPort(parsed.rendererPort),
+          windows,
           workspaces
         };
       }
@@ -769,26 +774,123 @@ class CmuxWindowsRuntime {
       // First run or corrupt state: start clean.
     }
     const workspace = this.newWorkspace("Workspace 1");
-    return { activeWorkspaceId: workspace.id, rendererPort: 0, workspaces: [workspace] };
+    const windows = this.restoreWindowOwners([], [workspace], workspace.id);
+    return { activeWorkspaceId: workspace.id, rendererPort: 0, windows, workspaces: [workspace] };
   }
 
-  resetSession() {
-    for (const terminal of this.terminals.values()) terminal.close();
-    this.terminals.clear();
-    const rendererPort = sanitizeRendererPort(this.state.rendererPort);
-    const workspace = this.newWorkspace("cmux");
-    this.state = { activeWorkspaceId: workspace.id, rendererPort, workspaces: [workspace] };
+  restoreWindowOwners(saved, workspaces, activeWorkspaceId) {
+    const windows = Array.isArray(saved) ? saved.filter(window =>
+      typeof window?.id === "string" && /^window_[a-z0-9-]+$/i.test(window.id)
+    ).map(({ id, activeWorkspaceId }) => ({ id, activeWorkspaceId })) : [];
+    if (!windows.length) windows.push({ id: id("window"), activeWorkspaceId });
+    const ids = new Set(windows.map(window => window.id));
+    for (const workspace of workspaces) {
+      if (!ids.has(workspace.windowId)) workspace.windowId = windows[0].id;
+    }
+    for (const window of windows) {
+      const owned = workspaces.filter(workspace => workspace.windowId === window.id);
+      if (!owned.some(workspace => workspace.id === window.activeWorkspaceId)) {
+        window.activeWorkspaceId = owned[0]?.id || null;
+      }
+    }
+    return windows;
+  }
+
+  registerRendererWindow(windowId) {
+    this.windowTokens.set(windowId, crypto.randomBytes(32).toString("base64url"));
+  }
+
+  rendererWindow(windowId = this.state.windows[0].id) {
+    const window = this.state.windows.find(item => item.id === windowId);
+    return window && { ...window, token: this.windowTokens.get(windowId) };
+  }
+
+  createWindow() {
+    const window = { id: id("window"), activeWorkspaceId: null };
+    this.state.windows.push(window);
+    this.registerRendererWindow(window.id);
     this.persistAndBroadcast();
-    return this.serializedState();
+    return this.rendererWindow(window.id);
+  }
+
+  closeWindow(windowId) {
+    if (!this.rendererWindow(windowId) || this.state.windows.length <= 1) return false;
+    for (const workspace of this.workspacesForWindow(windowId)) {
+      this.disposeWorkspaceTerminals(workspace);
+    }
+    this.state.workspaces = this.state.workspaces.filter(workspace => workspace.windowId !== windowId);
+    this.state.windows = this.state.windows.filter(window => window.id !== windowId);
+    this.windowTokens.delete(windowId);
+    this.state.activeWorkspaceId = this.state.windows[0].activeWorkspaceId;
+    this.persistAndBroadcast();
+    return true;
+  }
+
+  workspacesForWindow(windowId) {
+    return this.state.workspaces.filter(workspace => workspace.windowId === windowId);
+  }
+
+  setWindowFocus(windowId, workspaceId) {
+    const window = this.state.windows.find(item => item.id === windowId);
+    if (window) window.activeWorkspaceId = workspaceId;
+    if (window === this.state.windows[0]) this.state.activeWorkspaceId = workspaceId;
+  }
+
+  moveWorkspaceToWindow(workspaceId, sourceWindowId, targetWindowId, beforeWorkspaceId) {
+    const workspace = this.state.workspaces.find(item => item.id === workspaceId);
+    if (!workspace || workspace.windowId !== sourceWindowId || sourceWindowId === targetWindowId
+      || !this.rendererWindow(targetWindowId)) return false;
+    if (beforeWorkspaceId && !this.workspacesForWindow(targetWindowId).some(item => item.id === beforeWorkspaceId)) {
+      return false;
+    }
+    workspace.windowId = targetWindowId;
+    if (beforeWorkspaceId) {
+      this.state.workspaces.splice(this.state.workspaces.indexOf(workspace), 1);
+      const targetIndex = this.state.workspaces.findIndex(item => item.id === beforeWorkspaceId);
+      this.state.workspaces.splice(targetIndex, 0, workspace);
+    }
+    if (this.rendererWindow(sourceWindowId)?.activeWorkspaceId === workspaceId) {
+      this.setWindowFocus(sourceWindowId, this.workspacesForWindow(sourceWindowId)[0]?.id || null);
+    }
+    this.setWindowFocus(targetWindowId, workspaceId);
+    for (const panel of workspace.panels) {
+      for (const client of this.terminals.get(panel.id)?.clients || []) {
+        if (client.windowId === sourceWindowId) client.terminate();
+      }
+    }
+    this.persistAndBroadcast();
+    return true;
+  }
+
+  disposeWorkspaceTerminals(workspace) {
+    for (const panel of workspace.panels) {
+      this.terminals.get(panel.id)?.close();
+      this.terminals.delete(panel.id);
+    }
+  }
+
+  resetSession(windowId = this.state.windows[0].id) {
+    for (const workspace of this.workspacesForWindow(windowId)) this.disposeWorkspaceTerminals(workspace);
+    const workspace = this.newWorkspace("cmux");
+    workspace.windowId = windowId;
+    this.state.workspaces = this.state.workspaces.filter(item => item.windowId !== windowId);
+    this.state.workspaces.push(workspace);
+    this.setWindowFocus(windowId, workspace.id);
+    this.persistAndBroadcast();
+    return this.serializedState(windowId);
   }
 
   persistSession() {
     fs.mkdirSync(this.dataDir, { recursive: true });
     const payload = {
+      version: 2,
       activeWorkspaceId: this.state.activeWorkspaceId,
       rendererPort: sanitizeRendererPort(this.state.rendererPort),
+      windows: this.state.windows,
       workspaces: this.state.workspaces.map((workspace) => ({
         id: workspace.id,
+        windowId: workspace.windowId,
+        layout: workspace.layout,
         title: workspace.title,
         color: workspace.color,
         cwd: workspace.cwd,
@@ -813,7 +915,9 @@ class CmuxWindowsRuntime {
         }))
       }))
     };
-    fs.writeFileSync(this.sessionFile, JSON.stringify(payload, null, 2));
+    const temporary = this.sessionFile + ".tmp";
+    fs.writeFileSync(temporary, JSON.stringify(payload, null, 2));
+    fs.renameSync(temporary, this.sessionFile);
   }
 
   newWorkspace(title, options = {}) {
@@ -822,6 +926,7 @@ class CmuxWindowsRuntime {
     const panel = this.newPanel("terminal", workspaceId, { cwd });
     return {
       id: workspaceId,
+      windowId: options.windowId || this.state?.windows[0].id,
       title: workspaceTitle(title),
       color: workspaceColors[this.state?.workspaces?.length % workspaceColors.length || 0],
       cwd,
@@ -864,14 +969,16 @@ class CmuxWindowsRuntime {
     return panel;
   }
 
-  serializedState() {
+  serializedState(windowId = this.state.windows[0].id) {
     return {
-      activeWorkspaceId: this.state.activeWorkspaceId,
+      windowId,
+      windows: this.state.windows.map(window => ({ id: window.id })),
+      activeWorkspaceId: this.rendererWindow(windowId)?.activeWorkspaceId || null,
       rendererPort: sanitizeRendererPort(this.state.rendererPort),
       ptyAvailable: this.ptyAvailable,
       pipeName: this.pipeName,
       palette: workspaceColors,
-      workspaces: this.state.workspaces.map((workspace) => this.serializeWorkspace(workspace))
+      workspaces: this.workspacesForWindow(windowId).map((workspace) => this.serializeWorkspace(workspace))
     };
   }
 
@@ -897,6 +1004,7 @@ class CmuxWindowsRuntime {
     const branch = gitBranch(cwd);
     return {
       id: workspace.id,
+      layout: workspace.layout,
       title: workspace.title,
       color: workspace.color || "",
       activePanelId: workspace.activePanelId,
@@ -935,9 +1043,10 @@ class CmuxWindowsRuntime {
     };
   }
 
-  activeWorkspace() {
-    return this.state.workspaces.find((workspace) => workspace.id === this.state.activeWorkspaceId)
-      || this.state.workspaces[0];
+  activeWorkspace(windowId = this.state.windows[0].id) {
+    const workspaces = this.workspacesForWindow(windowId);
+    const activeId = this.rendererWindow(windowId)?.activeWorkspaceId;
+    return workspaces.find(workspace => workspace.id === activeId) || workspaces[0];
   }
 
   findPanel(panelId) {
@@ -1008,10 +1117,10 @@ class CmuxWindowsRuntime {
 
   createWorkspace(title, runtimeOptions = {}) {
     const explicitTitle = workspaceTitle(title, "");
-    const workspace = this.newWorkspace(explicitTitle || this.generatedWorkspaceTitle());
+    const workspace = this.newWorkspace(explicitTitle || this.generatedWorkspaceTitle(), runtimeOptions);
     workspace.activePanelId = workspace.panels[0]?.id || null;
     this.state.workspaces.push(workspace);
-    this.state.activeWorkspaceId = workspace.id;
+    this.setWindowFocus(workspace.windowId, workspace.id);
     this.persistAndBroadcast();
     this.scheduleTerminalPrewarm(workspace.panels[0], runtimeOptions.prewarmResponse);
     return workspace;
@@ -1023,10 +1132,10 @@ class CmuxWindowsRuntime {
     const explicitTitle = workspaceTitle(options.title, "");
     const generatedTitleBase = hasRequestedCwd ? path.basename(cwd) : "Workspace";
     const title = explicitTitle || this.generatedWorkspaceTitle(generatedTitleBase || "Workspace");
-    const workspace = this.newWorkspace(title, { cwd });
+    const workspace = this.newWorkspace(title, { cwd, windowId: runtimeOptions.windowId });
     workspace.activePanelId = workspace.panels[0]?.id || null;
     this.state.workspaces.push(workspace);
-    this.state.activeWorkspaceId = workspace.id;
+    this.setWindowFocus(workspace.windowId, workspace.id);
     this.persistAndBroadcast();
     this.scheduleTerminalPrewarm(workspace.panels[0], runtimeOptions.prewarmResponse);
     return workspace;
@@ -1035,6 +1144,7 @@ class CmuxWindowsRuntime {
   createPanel(workspaceId, type, options = {}, runtimeOptions = {}) {
     const workspace = this.state.workspaces.find((candidate) => candidate.id === workspaceId)
       || this.activeWorkspace();
+    if (!workspace) throw new Error("Workspace not found");
     const panel = this.newPanel(type || "terminal", workspace.id, {
       ...options,
       cwd: sanitizeDirectoryPath(options.cwd || workspace.cwd)
@@ -1070,7 +1180,7 @@ class CmuxWindowsRuntime {
       ? this.state.workspaces.findIndex((candidate) => candidate.id === beforeWorkspaceId)
       : -1;
     this.state.workspaces.splice(insertIndex >= 0 ? insertIndex : this.state.workspaces.length, 0, workspace);
-    this.state.activeWorkspaceId = workspace.id;
+    this.setWindowFocus(workspace.windowId, workspace.id);
     this.persistAndBroadcast();
     return true;
   }
@@ -1091,7 +1201,7 @@ class CmuxWindowsRuntime {
       : -1;
     targetWorkspace.panels.splice(insertIndex >= 0 ? insertIndex : targetWorkspace.panels.length, 0, found.panel);
     targetWorkspace.activePanelId = panelId;
-    this.state.activeWorkspaceId = targetWorkspace.id;
+    this.setWindowFocus(targetWorkspace.windowId, targetWorkspace.id);
     return true;
   }
 
@@ -1109,7 +1219,7 @@ class CmuxWindowsRuntime {
       target.panels.push(panel);
     }
     target.activePanelId=activePanelId;
-    this.state.activeWorkspaceId=target.id;
+    this.setWindowFocus(target.windowId, target.id);
     this.persistAndBroadcast();
     return true;
   }
@@ -1181,11 +1291,8 @@ class CmuxWindowsRuntime {
   closeWorkspace(workspaceId) {
     const workspace = this.state.workspaces.find((candidate) => candidate.id === workspaceId);
     if (!workspace) return false;
-    for (const panel of workspace.panels) {
-      this.terminals.get(panel.id)?.close();
-      this.terminals.delete(panel.id);
-    }
-    if (this.state.workspaces.length <= 1) {
+    this.disposeWorkspaceTerminals(workspace);
+    if (this.workspacesForWindow(workspace.windowId).length <= 1) {
       workspace.title = "cmux";
       workspace.panels = [];
       workspace.activePanelId = null;
@@ -1193,8 +1300,8 @@ class CmuxWindowsRuntime {
       return true;
     }
     this.state.workspaces = this.state.workspaces.filter((candidate) => candidate.id !== workspace.id);
-    if (this.state.activeWorkspaceId === workspace.id) {
-      this.state.activeWorkspaceId = this.state.workspaces[0].id;
+    if (this.rendererWindow(workspace.windowId)?.activeWorkspaceId === workspace.id) {
+      this.setWindowFocus(workspace.windowId, this.workspacesForWindow(workspace.windowId)[0]?.id || null);
     }
     this.persistAndBroadcast();
     return true;
@@ -1229,9 +1336,10 @@ class CmuxWindowsRuntime {
   }
 
   focusWorkspace(workspaceId) {
-    if (!this.state.workspaces.some((workspace) => workspace.id === workspaceId)) return false;
-    if (this.state.activeWorkspaceId === workspaceId) return true;
-    this.state.activeWorkspaceId = workspaceId;
+    const workspace = this.state.workspaces.find(item => item.id === workspaceId);
+    if (!workspace) return false;
+    if (this.rendererWindow(workspace.windowId)?.activeWorkspaceId === workspaceId) return true;
+    this.setWindowFocus(workspace.windowId, workspaceId);
     this.broadcastState();
     this.schedulePersistSession();
     return true;
@@ -1240,10 +1348,10 @@ class CmuxWindowsRuntime {
   focusPanel(panelId) {
     const found = this.findPanel(panelId);
     if (!found) return false;
-    const alreadyFocused = this.state.activeWorkspaceId === found.workspace.id
+    const alreadyFocused = this.rendererWindow(found.workspace.windowId)?.activeWorkspaceId === found.workspace.id
       && found.workspace.activePanelId === panelId;
     const hadAttention = Boolean(found.panel.needsAttention || found.panel.notificationText);
-    this.state.activeWorkspaceId = found.workspace.id;
+    this.setWindowFocus(found.workspace.windowId, found.workspace.id);
     found.workspace.activePanelId = panelId;
     found.panel.needsAttention = false;
     found.panel.notificationText = "";
@@ -1253,8 +1361,9 @@ class CmuxWindowsRuntime {
     return true;
   }
 
-  notify(message) {
-    const workspace = this.activeWorkspace();
+  notify(message, windowId) {
+    const workspace = this.activeWorkspace(windowId);
+    if (!workspace) return null;
     const panel = workspace.panels.find((candidate) => candidate.id === workspace.activePanelId)
       || workspace.panels[0];
     if (!panel) return null;
@@ -1317,9 +1426,18 @@ class CmuxWindowsRuntime {
   }
 
   broadcastState() {
-    const payload = JSON.stringify({ type: "state", state: this.serializedState() });
+    this.onStateChanged?.();
+    const payloads = new Map();
     for (const socket of this.eventSockets) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(payload);
+      if (socket.readyState !== WebSocket.OPEN) continue;
+      if (socket.windowId && !this.windowTokens.has(socket.windowId)) {
+        socket.terminate();
+        continue;
+      }
+      if (!payloads.has(socket.windowId)) {
+        payloads.set(socket.windowId, JSON.stringify({ type: "state", state: this.serializedState(socket.windowId) }));
+      }
+      socket.send(payloads.get(socket.windowId));
     }
   }
 
@@ -1329,8 +1447,13 @@ class CmuxWindowsRuntime {
     return String(headerToken || url.searchParams.get("token") || "");
   }
 
-  requestHasValidToken(request, url) {
-    return tokensMatch(this.launchToken, this.requestToken(request, url));
+  requestContext(request, url) {
+    const token = this.requestToken(request, url);
+    if (tokensMatch(this.launchToken, token)) return { windowId: this.state.windows[0].id, full: true };
+    for (const [windowId, expected] of this.windowTokens) {
+      if (tokensMatch(expected, token)) return { windowId, full: false };
+    }
+    return null;
   }
 
   requestHasAllowedOrigin(request) {
@@ -1345,18 +1468,48 @@ class CmuxWindowsRuntime {
       writeJSON(response, 403, { error: "forbidden_origin" });
       return;
     }
-    if (!this.requestHasValidToken(request, url)) {
+    const context = this.requestContext(request, url);
+    if (!context) {
       writeJSON(response, 401, { error: "unauthorized" });
       return;
     }
+    const { windowId, full } = context;
+    const ownsWorkspace = workspaceId => this.windowTokens.has(windowId) && this.state.workspaces.some(
+      workspace => workspace.id === workspaceId && (full || workspace.windowId === windowId)
+    );
+    const ownsPanel = panelId => ownsWorkspace(this.findPanel(panelId)?.workspace.id);
+    const notFound = () => writeJSON(response, 404, { error: "not_found" });
     try {
       if (request.method === "GET" && url.pathname === "/api/state") {
-        writeJSON(response, 200, this.serializedState());
+        writeJSON(response, 200, this.serializedState(windowId));
+        return;
+      }
+      if (full && request.method === "POST" && url.pathname === "/api/windows") {
+        writeJSON(response, 201, this.createWindow());
+        return;
+      }
+      const moveWindow = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/move-to-window$/);
+      if (request.method === "POST" && moveWindow) {
+        const body = await readBody(request);
+        if (!ownsWorkspace(moveWindow[1])) return notFound();
+        const ok = this.moveWorkspaceToWindow(moveWindow[1], windowId, body.windowId, body.beforeWorkspaceId);
+        writeJSON(response, ok ? 200 : 409, { ok });
+        return;
+      }
+      const layout = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/layout$/);
+      if (request.method === "PUT" && layout) {
+        const body = await readBody(request);
+        if (!ownsWorkspace(layout[1])) return notFound();
+        const workspace = this.state.workspaces.find(item => item.id === layout[1]);
+        workspace.layout = { tree: body.tree || null, groups: Array.isArray(body.groups) ? body.groups : [] };
+        this.schedulePersistSession();
+        writeJSON(response, 200, { ok: true });
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/workspaces") {
         const body = await readBody(request);
-        writeJSON(response, 200, this.serializeWorkspace(this.createWorkspaceFromOptions(body, { prewarmResponse: response })));
+        if (!this.windowTokens.has(windowId)) return notFound();
+        writeJSON(response, 200, this.serializeWorkspace(this.createWorkspaceFromOptions(body, { prewarmResponse: response, windowId })));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/session/save") {
@@ -1365,22 +1518,26 @@ class CmuxWindowsRuntime {
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/session/reset") {
-        writeJSON(response, 200, this.resetSession());
+        writeJSON(response, 200, this.resetSession(windowId));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/panels") {
         const body = await readBody(request);
-        writeJSON(response, 200, this.serializePanel(this.createPanel(body.workspaceId, body.type, body, { prewarmResponse: response })));
+        const workspaceId = body.workspaceId || this.activeWorkspace(windowId)?.id;
+        if (!ownsWorkspace(workspaceId)) return notFound();
+        writeJSON(response, 200, this.serializePanel(this.createPanel(workspaceId, body.type, body, { prewarmResponse: response })));
         return;
       }
       const focusWorkspaceMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)\/focus$/);
       if (request.method === "POST" && focusWorkspaceMatch) {
+        if (!ownsWorkspace(focusWorkspaceMatch[1])) return notFound();
         const ok = this.focusWorkspace(focusWorkspaceMatch[1]);
         writeJSON(response, ok ? 200 : 404, { ok });
         return;
       }
       const workspaceDeleteMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)$/);
       if (request.method === "DELETE" && workspaceDeleteMatch) {
+        if (!ownsWorkspace(workspaceDeleteMatch[1])) return notFound();
         const ok = this.closeWorkspace(workspaceDeleteMatch[1]);
         writeJSON(response, ok ? 200 : 409, { ok });
         return;
@@ -1388,30 +1545,35 @@ class CmuxWindowsRuntime {
       const workspaceRenameMatch = url.pathname.match(/^\/api\/workspaces\/([^/]+)$/);
       if (request.method === "PATCH" && workspaceRenameMatch) {
         const body = await readBody(request);
+        if (!ownsWorkspace(workspaceRenameMatch[1]) || (body.beforeWorkspaceId && !ownsWorkspace(body.beforeWorkspaceId))) return notFound();
         const ok = this.updateWorkspace(workspaceRenameMatch[1], body);
         writeJSON(response, ok ? 200 : 404, { ok });
         return;
       }
       const panelFocusMatch = url.pathname.match(/^\/api\/panels\/([^/]+)\/focus$/);
       if (request.method === "POST" && panelFocusMatch) {
+        if (!ownsPanel(panelFocusMatch[1])) return notFound();
         const ok = this.focusPanel(panelFocusMatch[1]);
         writeJSON(response, ok ? 200 : 404, { ok });
         return;
       }
       const panelRestartMatch = url.pathname.match(/^\/api\/panels\/([^/]+)\/restart$/);
       if (request.method === "POST" && panelRestartMatch) {
+        if (!ownsPanel(panelRestartMatch[1])) return notFound();
         const ok = this.restartPanel(panelRestartMatch[1]);
         writeJSON(response, ok ? 200 : 404, { ok });
         return;
       }
       const panelDeleteMatch = url.pathname.match(/^\/api\/panels\/([^/]+)$/);
       if (request.method === "DELETE" && panelDeleteMatch) {
+        if (!ownsPanel(panelDeleteMatch[1])) return notFound();
         const ok = this.closePanel(panelDeleteMatch[1]);
         writeJSON(response, ok ? 200 : 409, { ok });
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/panels/transfer") {
         const body=await readBody(request);
+        if (!ownsWorkspace(body.workspaceId) || !Array.isArray(body.panelIds) || !body.panelIds.every(ownsPanel)) return notFound();
         const ok=this.movePanels(body.panelIds,body.workspaceId,body.activePanelId);
         writeJSON(response,ok?200:409,{ok});
         return;
@@ -1419,19 +1581,23 @@ class CmuxWindowsRuntime {
       const panelUpdateMatch = url.pathname.match(/^\/api\/panels\/([^/]+)$/);
       if (request.method === "PATCH" && panelUpdateMatch) {
         const body = await readBody(request);
+        if (!ownsPanel(panelUpdateMatch[1]) || (body.workspaceId && !ownsWorkspace(body.workspaceId))
+          || (body.beforePanelId && !ownsPanel(body.beforePanelId))) return notFound();
         const ok = this.updatePanel(panelUpdateMatch[1], body);
         writeJSON(response, 200, { ok });
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/notify") {
         const body = await readBody(request);
-        const panel = this.notify(body.message);
+        const panel = this.notify(body.message, windowId);
         writeJSON(response, 200, { panel: panel ? this.serializePanel(panel) : null });
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/input") {
         const body = await readBody(request);
-        const ok = this.sendInput(body.text, body.panelId);
+        const panelId = body.panelId || this.activeWorkspace(windowId)?.activePanelId;
+        if (!ownsPanel(panelId)) return notFound();
+        const ok = this.sendInput(body.text, panelId);
         writeJSON(response, ok ? 200 : 404, { ok });
         return;
       }
@@ -1473,7 +1639,7 @@ class CmuxWindowsRuntime {
       response.end("Forbidden");
       return;
     }
-    if (!this.requestHasValidToken(request, url)) {
+    if (!this.requestContext(request, url)) {
       response.writeHead(401);
       response.end("Unauthorized");
       return;
@@ -1538,21 +1704,25 @@ class CmuxWindowsRuntime {
 
   handleUpgrade(request, socket, head) {
     const url = new URL(request.url, "http://127.0.0.1");
-    if (!this.requestHasAllowedOrigin(request) || !this.requestHasValidToken(request, url)) {
+    const context = this.requestContext(request, url);
+    if (!this.requestHasAllowedOrigin(request) || !context) {
       socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;
     }
     this.wss.handleUpgrade(request, socket, head, (ws) => {
+      ws.windowId = context.full ? undefined : context.windowId;
       if (url.pathname === "/events") {
         this.eventSockets.add(ws);
-        ws.send(JSON.stringify({ type: "state", state: this.serializedState() }));
+        ws.send(JSON.stringify({ type: "state", state: this.serializedState(context.windowId) }));
         ws.on("close", () => this.eventSockets.delete(ws));
         return;
       }
       const match = url.pathname.match(/^\/terminal\/([^/]+)$/);
       if (match) {
-        const terminal = this.ensureTerminalProcess(this.findPanel(match[1])?.panel);
+        const found = this.findPanel(match[1]);
+        const terminal = found && (!ws.windowId || found.workspace.windowId === ws.windowId)
+          ? this.ensureTerminalProcess(found.panel) : null;
         if (!terminal) {
           ws.close();
           return;

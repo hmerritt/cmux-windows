@@ -29,6 +29,12 @@ contextBridge.exposeInMainWorld("cmuxNative", {
   updateShortcut: (id,value,reset=false) => ipcRenderer.invoke('shortcuts:update',id,value,reset),
   reloadShortcuts: () => ipcRenderer.invoke('shortcuts:reload'),
   nativeShortcut: (action,guestId) => ipcRenderer.invoke('shortcut:native',action,guestId),
+  beginWorkspaceDrag: (workspaceId, nonce) => ipcRenderer.invoke('workspace:drag', workspaceId, nonce),
+  dropWorkspace: (nonce, beforeId) => ipcRenderer.invoke('workspace:drop', nonce, beforeId),
+  browserSurface: (panelId, action, value) => ipcRenderer.invoke("browser:surface", panelId, action, value),
+  onBrowserSurfaceEvent(callback) {
+    ipcRenderer.on("browser:surface-event", (_event, panelId, name, data) => callback(panelId, name, data));
+  },
   onShortcut(callback) { ipcRenderer.on('cmux-shortcut',(_event,value)=>callback(value)); },
   onShortcutsChanged(callback) { ipcRenderer.on('cmux-shortcuts-changed',(_event,value)=>callback(value)); },
   onCommand(callback) {

@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+process.env.CMUX_WINDOWS_DISABLE_PTY = "1";
 const { createCmuxWindowsRuntime } = require("../src/server.cjs");
 
 test("a live workspace moves to another window and the source loses access", async () => {

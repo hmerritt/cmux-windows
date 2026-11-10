@@ -35,6 +35,20 @@ const editorLabels={
 };
 for(const [locale,values] of Object.entries(editorLabels))for(const [index,key] of ['editFile','saveFile','discardChanges','unsavedChanges','fileSaved','fileConflict','saveError','draftRecovered','draftError'].entries())messages[locale][key]=values[index];
 export const parityText=key=>messages[currentLocale()]?.[key] || messages.en[key] || key;
+const windowLabels = {
+  en: ["Move to Window", "Could not move the workspace."],
+  de: ["In Fenster verschieben", "Der Arbeitsbereich konnte nicht verschoben werden."],
+  fr: ["Déplacer vers la fenêtre", "Impossible de déplacer l’espace de travail."],
+  es: ["Mover a la ventana", "No se pudo mover el espacio de trabajo."],
+  ar: ["نقل إلى النافذة", "تعذّر نقل مساحة العمل."],
+  "zh-Hans": ["移至窗口", "无法移动工作区。"],
+  "zh-Hant": ["移至視窗", "無法移動工作區。"],
+  ko: ["창으로 이동", "작업 공간을 이동할 수 없습니다."],
+  ja: ["ウインドウに移動", "ワークスペースを移動できませんでした。"]
+};
+for (const [locale, [moveToWindow, moveWindowFailed]] of Object.entries(windowLabels)) {
+  Object.assign(messages[locale], { moveToWindow, moveWindowFailed });
+}
 const mutationLabels={
   en:['New file','New folder','Rename','Create','Cancel','An item with this name already exists.','Enter a valid Windows file name.','Unable to change this item.'],
   de:['Neue Datei','Neuer Ordner','Umbenennen','Erstellen','Abbrechen','Ein Element mit diesem Namen ist bereits vorhanden.','Geben Sie einen gültigen Windows-Dateinamen ein.','Dieses Element kann nicht geändert werden.'],
