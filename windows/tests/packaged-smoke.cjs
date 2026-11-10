@@ -7,6 +7,7 @@ const net = require('node:net');
 const assert = require('node:assert/strict');
 const { WebSocket } = require('ws');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const terminalCloseOnly = process.argv.includes('--pty-close-only');
 
 (async () => {
   const lease = net.createServer();
@@ -15,10 +16,12 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
   await new Promise(resolve => lease.close(resolve));
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'cmux-packaged-test-'));
   const binary = process.env.CMUX_TEST_BINARY || path.resolve(__dirname, '../release/win-unpacked/cmux.exe');
-  const env = {...process.env, APPDATA:profile, CMUX_WINDOWS_CONFIG:path.join(profile,'cmux.json'), CMUX_WINDOWS_PIPE:`\\\\.\\pipe\\cmux-packaged-test-${process.pid}`};
+  const env = {...process.env, APPDATA:profile, CMUX_WINDOWS_CONFIG:path.join(profile,'cmux.json'), CMUX_WINDOWS_DATA_DIR:path.join(profile,'runtime'), CMUX_WINDOWS_PIPE:`\\\\.\\pipe\\cmux-packaged-test-${process.pid}`};
   delete env.ELECTRON_RUN_AS_NODE;
+  delete env.CMUX_WINDOWS_NODE;
+  delete env.CMUX_WINDOWS_DISABLE_PTY;
   const child = spawn(binary, [`--user-data-dir=${path.join(profile,'electron')}`, `--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1'], {env, windowsHide:true, stdio:'ignore'});
-  const exited = new Promise(resolve => child.once('exit', resolve));
+  const exited = new Promise(resolve => child.once('exit', (code, signal) => resolve({code, signal})));
   let socket;
   try {
     let target;
@@ -69,6 +72,66 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
         return response.json();
       })()`);
     }
+    async function verifyTerminal(panelId) {
+      const pageUrl = new URL(target.url);
+      const terminalUrl = new URL(`/terminal/${panelId}`, pageUrl);
+      terminalUrl.protocol = 'ws:';
+      terminalUrl.searchParams.set('token', pageUrl.searchParams.get('token'));
+      const terminal = new WebSocket(terminalUrl, {origin:pageUrl.origin});
+      let timeout;
+      try {
+        await new Promise((resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error(`Terminal ${panelId} did not execute a command`)), 10000);
+          terminal.once('error', reject);
+          terminal.once('close', () => reject(new Error(`Terminal ${panelId} closed before producing output`)));
+          terminal.once('open', () => {
+            // The caret splits the marker in the echoed input, and cmd strips it in the output.
+            terminal.send(JSON.stringify({type:'input', data:'echo CMUX_PTY_^READY\r'}));
+          });
+          let output = '';
+          terminal.on('message', raw => {
+            const message = JSON.parse(raw);
+            if (message.type !== 'output') return;
+            output += message.data;
+            if (output.includes('CMUX_PTY_READY')) resolve();
+          });
+        });
+      } finally {
+        clearTimeout(timeout);
+        terminal.close();
+      }
+    }
+    async function startTerminalWorkspace(title) {
+      const workspace = await api('/api/workspaces', {title, cwd:profile});
+      const panels = [];
+      for (let i = 0; i < 6; i++) {
+        panels.push(await api('/api/panels', {workspaceId:workspace.id, type:'terminal', shellProfile:'cmd'}));
+      }
+      await Promise.all(panels.map(panel => verifyTerminal(panel.id)));
+      return workspace.id;
+    }
+    async function verifyTerminalClose() {
+      for (let i = 1; i <= 3; i++) {
+        const workspaceId = await startTerminalWorkspace(`ConPTY workspace close ${i}`);
+        assert.equal((await api(`/api/workspaces/${workspaceId}`, undefined, 'DELETE')).ok, true);
+        const afterClose = await api('/api/state', undefined, 'GET');
+        assert(!afterClose.workspaces.some(workspace => workspace.id === workspaceId), 'Workspace close must remove its terminals');
+      }
+      console.log('PASS packaged ConPTY: closed three workspaces with live terminals and started new shells between closes');
+
+      await startTerminalWorkspace('ConPTY app quit');
+      // The window can close before CDP delivers the command response.
+      socket.send(JSON.stringify({id:++id, method:'Runtime.evaluate', params:{expression:'window.cmuxNative.closeWindow()'}}));
+      let quitTimeout;
+      const quitResult = await Promise.race([
+        exited,
+        new Promise((_, reject) => {
+          quitTimeout = setTimeout(() => reject(new Error('Packaged app did not quit with live ConPTY terminals')), 10000);
+        })
+      ]).finally(() => clearTimeout(quitTimeout));
+      assert.deepEqual(quitResult, {code:0, signal:null}, 'Packaged app must quit cleanly with live ConPTY terminals');
+      console.log('PASS packaged ConPTY: quit cleanly with live terminals');
+    }
     let loaded=false;
     for(let i=0;i<150;i++) {
       try { loaded=await evaluate("location.protocol==='http:' && document.readyState==='complete' && !!document.querySelector('.workspace-row') && !!new URL(location.href).searchParams.get('token')"); } catch {}
@@ -76,11 +139,15 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
       await delay(100);
     }
     assert(loaded,'Packaged renderer must finish loading');
+    const state=await api('/api/state',undefined,'GET');
+    assert.equal(state.ptyAvailable,true,'Packaged native ConPTY must load');
+    if (terminalCloseOnly) {
+      await verifyTerminalClose();
+      return;
+    }
     assert(await evaluate("typeof ImageAddon?.ImageAddon==='function' && typeof WebglAddon?.WebglAddon==='function'"),'Packaged renderer must load both terminal addons');
     const files=await evaluate(`window.cmuxNative.listWorkspaceFiles(${JSON.stringify(path.resolve(__dirname,'../..'))},'')`);
     assert(files.ok && files.entries.some(entry=>entry.name==='CLAUDE.md'),'Packaged file browser IPC must list the workspace');
-    const state=await api('/api/state',undefined,'GET');
-    assert.equal(state.ptyAvailable,true,'Packaged native ConPTY must load');
     await api('/api/workspaces',{title:'Packaged verification',cwd:path.resolve(__dirname,'../..')});
     let ready=false;
     for(let i=0;i<150;i++) {
@@ -251,8 +318,7 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
     const screenshot=await call('Page.captureScreenshot',{format:'png'});
     fs.mkdirSync(path.resolve(__dirname,'../test-output'),{recursive:true});
     fs.writeFileSync(path.resolve(__dirname,'../test-output/packaged.png'),Buffer.from(screenshot.data,'base64'));
-    await evaluate('window.cmuxNative.closeWindow()');
-    await Promise.race([exited,delay(10000).then(()=>{throw new Error('Packaged app did not close');})]);
+    await verifyTerminalClose();
     console.log('PASS packaged cmux.exe: ConPTY, WebGL, inline images, file IPC, keyboard split, Markdown, local images, Mermaid, sandboxed Vega, split Git diff and saved display preferences, directory search, file creation/rename/duplicate and Recycle Bin, clean close');
   } finally {
     socket?.close();
