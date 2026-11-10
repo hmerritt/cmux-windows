@@ -38605,6 +38605,10 @@ function showWorkspaceContextMenu(event, workspace) {
     ...(state.data?.windows || []).flatMap((window, index) => window.id === state.data.windowId ? [] : [
       contextMenuButton(`${parityText("moveToWindow")} ${index + 1}`, () => moveWorkspaceToWindow(workspace.id, window.id))
     ]),
+    contextMenuButton(parityText(workspace.browserAutomation ? "disableBrowserAutomation" : "enableBrowserAutomation"), () =>
+      api("/api/workspaces/" + workspace.id, {
+        method: "PATCH", body: JSON.stringify({ browserAutomation: !workspace.browserAutomation })
+      }).catch(() => toast(parityText("browserAutomationFailed")))),
     contextMenuButton("Change folder", () => chooseWorkspaceFolder(workspace), !workspace.id),
     contextMenuButton("Open folder", () => openWorkspaceFolder(workspace), !workspace.cwd),
     contextMenuButton("Copy setup", () => copyWorkspaceSetup(workspace)),

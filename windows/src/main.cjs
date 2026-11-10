@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { formatMessage, t } = require("./i18n.cjs");
+const { runBrowserCommand } = require("./browser-automation.cjs");
 const { BrowserSurfaces } = require("./browser-surfaces.cjs");
 const {ShortcutConfig} = require('./shortcut-config.cjs');
 const workspaceFiles=new (require('./workspace-files.cjs').WorkspaceFiles)({trash:target=>shell.trashItem(target)});
@@ -448,6 +449,8 @@ async function startRuntime() {
     }
   });
   inProcessRuntime.onStateChanged = () => browserSurfaces.reconcile();
+  inProcessRuntime.browserCommand = (panel, params, authorized) =>
+    runBrowserCommand(browserSurfaces, panel, params, authorized);
   runtimeInfo = await inProcessRuntime.listen();
   trustedRendererOrigin = new URL(runtimeInfo.url).origin;
 }

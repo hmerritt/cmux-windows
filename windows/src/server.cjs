@@ -8,6 +8,7 @@ const { fileURLToPath } = require("node:url");
 const { spawn, spawnSync } = require("node:child_process");
 const { WebSocket, WebSocketServer } = require("ws");
 const { t } = require("./i18n.cjs");
+const { browserCommands } = require("./browser-cli.cjs");
 const { agentSession, atomicJson, plainScrollback, resumeScript } = require("./session-restore.cjs");
 const {TerminalDirectoryReports, directoryReportingShellArgs} = require("./terminal-directory.cjs");
 
@@ -719,6 +720,7 @@ class CmuxWindowsRuntime {
     this.wss = new WebSocketServer({ noServer: true });
     this.eventSockets = new Set();
     this.windowTokens = new Map();
+    this.surfaceRefs = new Map();
     this.terminals = new Map();
     this.pendingPtyExits = new Set();
     this.pendingTerminalPrewarms = new Map();
@@ -945,6 +947,7 @@ class CmuxWindowsRuntime {
         id: workspace.id,
         windowId: workspace.windowId,
         layout: workspace.layout,
+        browserAutomation: workspace.browserAutomation === true,
         title: workspace.title,
         color: workspace.color,
         cwd: workspace.cwd,
@@ -1063,6 +1066,7 @@ class CmuxWindowsRuntime {
     return {
       id: workspace.id,
       layout: workspace.layout,
+      browserAutomation: workspace.browserAutomation === true,
       title: workspace.title,
       color: workspace.color || "",
       activePanelId: workspace.activePanelId,
@@ -1372,6 +1376,7 @@ class CmuxWindowsRuntime {
     }
     const workspace = this.state.workspaces.find((candidate) => candidate.id === workspaceId);
     if (!workspace) return false;
+    if (typeof updates.browserAutomation === "boolean") workspace.browserAutomation = updates.browserAutomation;
     if (Object.hasOwn(updates, "title")) {
       const trimmed = String(updates.title || "").trim();
       const used=new Set(this.state.workspaces.filter(item=>item.id!==workspaceId).map(item=>normalizedTitleKey(item.title)));
@@ -1934,17 +1939,21 @@ class CmuxWindowsRuntime {
     const terminal = this.terminals.get(String(panelId || ""));
     if (!terminal || terminal.closed || !terminal.panelToken) return null;
     if (!tokensMatch(terminal.panelToken, panelToken)) return null;
-    return { scope: "panel", panelId: terminal.panel.id };
+    return { scope: "panel", panelId: terminal.panel.id, panelToken };
   }
 
   async handlePipeLine(line, authContext = { scope: "full" }) {
     if (!line) return "ERROR empty command";
-    if (authContext.scope === "panel") return this.handlePanelPipeLine(line, authContext.panelId);
+    if (authContext.scope === "panel") {
+      if (!this.authenticatePanelPipe(authContext.panelId, authContext.panelToken)) return "ERROR unauthorized";
+      return this.handlePanelPipeLine(line, authContext.panelId, authContext.panelToken);
+    }
     if (line.startsWith("{")) {
       let request = null;
       try {
         request = JSON.parse(line);
-        return jsonRpcResponse(request.id, this.handleRpc(request.method, request.params || {}));
+        if (request.method === "browser.command") return this.handleBrowserPipe(request, authContext);
+        return jsonRpcResponse(request.id, await this.handleRpc(request.method, request.params || {}));
       } catch (error) {
         return jsonRpcErrorForException(error, request?.id);
       }
@@ -1974,13 +1983,16 @@ class CmuxWindowsRuntime {
     }
   }
 
-  async handlePanelPipeLine(line, panelId) {
+  async handlePanelPipeLine(line, panelId, panelToken) {
     if (line.startsWith("{")) {
       let request = null;
       try {
         request = JSON.parse(line);
         if (request.method === "system.ping") {
           return jsonRpcResponse(request.id, { ok: true });
+        }
+        if (request.method === "browser.command") {
+          return this.handleBrowserPipe(request, { scope: "panel", panelId, panelToken });
         }
         if (request.method === "agent.session") {
           const terminal = this.terminals.get(panelId);
@@ -2013,6 +2025,55 @@ class CmuxWindowsRuntime {
         return this.sendInput(`${args.join(" ")}\r`, panelId) ? "OK" : "ERROR no terminal";
       default:
         return `ERROR unauthorized command: ${command}`;
+    }
+  }
+
+  browserRef(panel) {
+    if (!this.surfaceRefs.has(panel.id)) this.surfaceRefs.set(panel.id, "surface:" + (this.surfaceRefs.size + 1));
+    return this.surfaceRefs.get(panel.id);
+  }
+
+  async handleBrowserPipe(request, context) {
+    const params = request.params || {};
+    const { command, surface } = params;
+    const scoped = context.scope === "panel";
+    const caller = scoped ? this.findPanel(context.panelId) : null;
+    const callerWorkspace = caller?.workspace;
+    const permitted = () => !scoped || (
+      this.authenticatePanelPipe(context.panelId, context.panelToken)
+      && this.findPanel(context.panelId)?.workspace === callerWorkspace
+      && callerWorkspace?.browserAutomation === true && !callerWorkspace.remote
+    );
+    if (!permitted()) return jsonRpcErrorResponse(request.id, -32001, "Browser automation is disabled for this workspace");
+    if (!this.browserCommand || !browserCommands.has(command)) {
+      return jsonRpcErrorResponse(request.id, -32601, "Browser command unavailable");
+    }
+    const workspace = callerWorkspace || this.activeWorkspace();
+    const workspaces = scoped ? [workspace] : this.state.workspaces;
+    let target;
+    if (surface) {
+      target = workspaces.flatMap(item => item.panels).find(panel =>
+        panel.type === "browser" && (panel.id === surface || this.browserRef(panel) === surface)
+      );
+    } else {
+      target = workspace?.panels.find(panel => panel.id === workspace.activePanelId && panel.type === "browser")
+        || workspace?.panels.find(panel => panel.type === "browser");
+    }
+    try {
+      if (command === "open-split" || (command === "open" && !surface && !target)) {
+        if (!workspace) throw new Error("Create a workspace before opening a browser");
+        target = this.createPanel(workspace.id, "browser", { url: params.url });
+      }
+      if (!target) throw new Error("Browser surface not found");
+      const authorized = () => permitted() && this.findPanel(target.id)?.panel === target
+        && (!scoped || this.findPanel(target.id)?.workspace === callerWorkspace);
+      const result = await this.browserCommand(target, params, authorized);
+      if (["identify", "open", "open-split"].includes(command) && result && typeof result === "object") {
+        result.surface_ref = this.browserRef(target);
+      }
+      return jsonRpcResponse(request.id, result);
+    } catch (error) {
+      return jsonRpcErrorResponse(request.id, -32000, String(error.message).slice(0, 512));
     }
   }
 
