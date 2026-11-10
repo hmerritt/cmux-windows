@@ -1725,10 +1725,18 @@ class CmuxWindowsRuntime {
             }
             let delivery = "uncertain";
             try {
-              delivery = terminal.write(`\x1b[200~${claim.prompt}\x1b[201~\r`) ? "sent" : "pending";
+              if (!terminal.write(`\x1b[200~${claim.prompt}\x1b[201~`)) {
+                delivery = "pending";
+              } else {
+                // Codex's terminal input groups keys received during a paste into that paste.
+                await new Promise(resolve => setTimeout(resolve, 200));
+                if (current() && !terminal.closed && terminal.liveAgent === liveAgent && terminal.write("\r")) {
+                  delivery = "sent";
+                }
+              }
               if (delivery === "sent") {
-                await new Promise(resolve => setTimeout(resolve, 100));
-                if (terminal.closed || terminal.liveAgent !== liveAgent) delivery = "uncertain";
+                const stillRunning = await agentProcessIsLive(liveAgent.process);
+                if (!stillRunning || terminal.closed || terminal.liveAgent !== liveAgent) delivery = "uncertain";
               }
             } finally {
               this.diffComments.finish(claim, delivery);

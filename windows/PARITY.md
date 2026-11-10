@@ -19,11 +19,11 @@ It does not execute Apple SwiftUI or the macOS GhosttyKit binary.
 | Middle-click tab close | Actual middle-button input closes only the clicked per-pane tab, including inactive tabs and the close icon. Sibling tabs and splits survive, inactive closes preserve pane focus, and empty strip space does nothing. Checked at 100% and 150%. |
 | Session restore | PowerShell and Command Prompt report each tab’s current directory, including hidden tabs. Full app restart verifies actual shell directories, workspace, split focus and selected tab; closing immediately after a pointer selection flushes pending focus before shutdown. Checked at 100% and 150%. |
 | Browser | Local fixture page loaded in a real guest, with sandbox enabled and Node integration disabled. Guest viewport fills the pane after window resizing and splitting at 100% and 150% scaling. |
-| Cross-window workspaces | Electron windows share one runtime. The workflow desktop test moves a workspace and verifies the same terminal PID and edited browser form after closing the source window. Window-scoped API tests reject mutations from the old owner. |
-| Restored history and older windows | Runtime tests verify bounded plain-text scrollback precedes live output and detached-profile imports preserve layout, focus and the source file without duplication. A full desktop restart restores browser Back and Forward history. The packaged Codex hook captures the native session ID. |
+| Cross-window workspaces | The desktop test exercises the keyboard move action and sidebar drop at 100% and 150% scaling. It verifies the same terminal PID and edited browser form after closing the source window. Window-scoped API tests reject mutations from the old owner. |
+| Restored history and older windows | Runtime tests verify bounded plain-text scrollback precedes live output and detached-profile imports preserve layout, focus and the source file without duplication. A full desktop restart restores browser Back and Forward history. The packaged app captures and resumes the same native Codex and Claude Code session once on restart. |
 | Browser CLI | The workflow desktop test exercises named-pipe navigation, waits, snapshots, clicks, text entry, keys, JavaScript and screenshot output against a local fixture. Scope tests cover default denial, revocation and cross-workspace access. |
 | SSH workspaces | The packaged app connects through Windows OpenSSH to the pinned Linux daemon and reattaches to the same remote shell PID after disconnect. Packaged checks verify loopback HTTP and WebSocket traffic through Chromium and request failure while disconnected. |
-| Diff review comments | The packaged diff viewer adds comments on both sides, displays outdated anchors and deletes comments. Store tests cover restart, workspace isolation, a single claim per batch, failed-write retry and uncertain delivery. |
+| Diff review comments | The packaged diff viewer adds comments on both sides, displays outdated anchors and deletes comments. Real Codex and Claude Code CLIs submit the review text and file and line context to a local model endpoint. Store tests cover restart, workspace isolation, a single claim per batch, failed-write retry and uncertain delivery. |
 | Notifications | Runtime notification reaches workspace summary, attention ring and bell count; notification panel opens. |
 | Restoration | Full process restart retains workspace, four terminal processes represented by three visible splits, tab membership and nested split tree. Shell processes are recreated on full desktop exit. |
 | Display scaling | Desktop integration passes at 100% and 150%. |
@@ -82,6 +82,20 @@ npm run dist:win -- --config.directories.output=release-parity-tabs --config.ele
 $env:CMUX_TEST_BINARY = "$PWD/release-parity-tabs/win-unpacked/cmux.exe"
 npm run test:packaged
 ```
+
+For the packaged agent checks, set `CMUX_TEST_CODEX_EXE` and
+`CMUX_TEST_CLAUDE_EXE` to the corresponding Windows executables. The tests use
+isolated agent profiles and a loopback model endpoint.
+
+```powershell
+npm run test:packaged -- --codex-only
+npm run test:packaged -- --claude-only
+```
+
+For the packaged SSH check, run `tests/ssh-loopback-fixture.py` on the Linux
+SSH host. Set `CMUX_TEST_SSH_DESTINATION`, `CMUX_TEST_SSH_PORT`,
+`CMUX_TEST_SSH_HTTP_PORT` and `CMUX_TEST_SSH_IDENTITY` for the fixture, then run
+`npm run test:packaged -- --ssh-only`.
 
 Tab-interaction regression `1ad64044d9` fails with
 `npx electron tests/tab-interactions-desktop.cjs` because empty-bar double-clicks
