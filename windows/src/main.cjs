@@ -693,15 +693,22 @@ async function createWindow() {
   await mainWindow.loadURL(launchUrl.href);
 }
 
-function stopRuntime() {
+function stopRuntime(event) {
   if (runtimeChild && !runtimeChild.killed) {
     runtimeChild.kill();
     runtimeChild = null;
   }
-  if (inProcessRuntime) {
-    inProcessRuntime.close();
-    inProcessRuntime = null;
+  const runtime = inProcessRuntime;
+  if (!runtime) return;
+  // Keep Electron's Node environment alive while ConPTY delivers its exit callbacks.
+  if (!runtime.closed) {
+    runtime.close();
+    void runtime.waitForPtyExits().then(() => {
+      inProcessRuntime = null;
+      app.quit();
+    });
   }
+  event.preventDefault();
 }
 
 const hasLock = app.requestSingleInstanceLock();
@@ -859,7 +866,7 @@ if (!hasLock) {
   }, ""));
 
   app.on("second-instance", () => {
-    if (!mainWindow) return;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
   });
@@ -870,5 +877,5 @@ if (!hasLock) {
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit();
   });
-  app.on("will-quit", () => { shortcutConfig.close(); stopRuntime(); });
+  app.on("will-quit", (event) => { shortcutConfig.close(); stopRuntime(event); });
 }

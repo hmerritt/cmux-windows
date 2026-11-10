@@ -568,6 +568,7 @@ class TerminalProcess {
     this.backlog = "";
     this.closed = false;
     this.ptyProcess = null;
+    this.ptyExit = null;
     this.child = null;
     this.directoryReports = new TerminalDirectoryReports();
     this.panelToken = crypto.randomBytes(32).toString("hex");
@@ -592,9 +593,12 @@ class TerminalProcess {
         })
       });
       this.ptyProcess.onData((data) => this.emitOutput(data));
-      this.ptyProcess.onExit(({ exitCode }) => {
-        this.emitOutput(`\r\n[process exited: ${exitCode}]\r\n`);
-        this.closed = true;
+      this.ptyExit = new Promise((resolve) => {
+        this.ptyProcess.onExit(({ exitCode }) => {
+          this.closed = true;
+          resolve();
+          this.emitOutput(`\r\n[process exited: ${exitCode}]\r\n`);
+        });
       });
       return;
     }
@@ -637,6 +641,7 @@ class TerminalProcess {
   }
 
   emitOutput(data) {
+    if (this.panel.runtime.closed) return;
     for (const reported of this.directoryReports.read(data)) {
       const cwd = sanitizeDirectoryPath(reported, "");
       if (cwd && cwd !== this.panel.cwd) {
@@ -707,6 +712,7 @@ class CmuxWindowsRuntime {
     this.wss = new WebSocketServer({ noServer: true });
     this.eventSockets = new Set();
     this.terminals = new Map();
+    this.pendingPtyExits = new Set();
     this.pendingTerminalPrewarms = new Map();
     this.terminalMetadataTimer = null;
     this.persistBroadcastTimer = null;
@@ -943,11 +949,16 @@ class CmuxWindowsRuntime {
   }
 
   ensureTerminalProcess(panel) {
-    if (!panel || panel.type !== "terminal") return null;
+    if (this.closed || panel?.type !== "terminal") return null;
     let terminal = this.terminals.get(panel.id);
     if (!terminal || terminal.closed) {
       terminal = new TerminalProcess(panel);
       this.terminals.set(panel.id, terminal);
+      const exit = terminal.ptyExit;
+      if (exit) {
+        this.pendingPtyExits.add(exit);
+        exit.then(() => this.pendingPtyExits.delete(exit));
+      }
     }
     return terminal;
   }
@@ -1258,8 +1269,8 @@ class CmuxWindowsRuntime {
     const workspace = this.activeWorkspace();
     const targetPanelId = panelId || workspace?.activePanelId;
     const found = targetPanelId ? this.findPanel(targetPanelId) : null;
-    if (!found || found.panel.type !== "terminal") return false;
-    const terminal = this.ensureTerminalProcess(found.panel);
+    const terminal = this.ensureTerminalProcess(found?.panel);
+    if (!terminal) return false;
     terminal.write(String(text || ""));
     return true;
   }
@@ -1541,12 +1552,11 @@ class CmuxWindowsRuntime {
       }
       const match = url.pathname.match(/^\/terminal\/([^/]+)$/);
       if (match) {
-        const found = this.findPanel(match[1]);
-        if (!found || found.panel.type !== "terminal") {
+        const terminal = this.ensureTerminalProcess(this.findPanel(match[1])?.panel);
+        if (!terminal) {
           ws.close();
           return;
         }
-        const terminal = this.ensureTerminalProcess(found.panel);
         terminal.attach(ws);
         return;
       }
@@ -1786,6 +1796,19 @@ class CmuxWindowsRuntime {
         return { ok: this.sendInput(params.text || "", params.panelId) };
       default:
         throw new Error(`unknown method: ${method}`);
+    }
+  }
+
+  async waitForPtyExits() {
+    if (!this.pendingPtyExits.size) return;
+    let timeout;
+    try {
+      await Promise.race([
+        Promise.all(this.pendingPtyExits),
+        new Promise((resolve) => { timeout = setTimeout(resolve, 6000); })
+      ]);
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
