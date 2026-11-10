@@ -9,7 +9,15 @@ import {createWorkspaceSearch} from './workspace-search.mjs';
 import {moveWorkspaceFileDrafts} from './file-editor.mjs';
 import {createDocumentPanes} from './document-panes.mjs';
 import {createDiffPanes} from './diff-panes.mjs';
-const diffPanes=createDiffPanes({onSourceChange:(id,updates)=>api(`/api/panels/${id}`,{method:'PATCH',body:JSON.stringify(updates)})});
+const diffPanes=createDiffPanes({
+  onSourceChange:(id,updates)=>api(`/api/panels/${id}`,{method:'PATCH',body:JSON.stringify(updates)}),
+  reviewRequest:(id,target='',options)=>api(`/api/panels/${id}/review-comments${target}`,options),
+  promptComment:({comment,anchor})=>showTextDialog({
+    title:parityText(comment?'reviewEdit':'reviewAdd'),
+    message:`${(comment||anchor).path} · ${(comment||anchor).line}`,
+    value:comment?.text, multiline:true
+  })
+});
 const documentPanes=createDocumentPanes({openMarkdown:(root,filePath)=>openMarkdownDocument(root,filePath)});
 const workspaceFileExplorer=createWorkspaceFileExplorer({showMenu:showWorkspaceFileContextMenu,openMarkdown:(root,filePath)=>openMarkdownDocument(root,filePath),prompt:options=>showTextDialog(options),beforeRename:(root,oldPath,newPath)=>moveWorkspaceFileDrafts(root,oldPath,newPath,{validateOnly:true}),onRename:(root,oldPath,newPath)=>renameWorkspaceDocumentReferences(root,oldPath,newPath)});
 const workspaceSearch=createWorkspaceSearch();
@@ -10578,6 +10586,7 @@ function appendPanelSignature(parts, panel = {}) {
   appendSignatureValue(parts, panel.filePath || '');
   appendSignatureValue(parts, panel.diffSource || '');
   appendSignatureValue(parts, panel.diffBase || '');
+  appendSignatureValue(parts, panel.liveAgent || "");
   appendSignatureValue(parts, Boolean(panel.needsAttention));
   appendSignatureValue(parts, panel.notificationText || "");
   appendSignatureValue(parts, Boolean(panel.pending));
@@ -10596,6 +10605,10 @@ function appendWorkspaceSignature(parts, workspace = {}) {
   appendSignatureValue(parts, workspace.cwdShort);
   appendSignatureValue(parts, workspace.branch || "");
   appendSignatureValue(parts, workspace.latestNotification || "");
+  appendSignatureValue(parts, JSON.stringify(workspace.ssh || null));
+  appendSignatureValue(parts, workspace.browserAutomation === true);
+  appendSignatureValue(parts, workspace.reviewPending || 0);
+  appendSignatureValue(parts, JSON.stringify(workspace.layout || null));
   appendSignatureArray(parts, workspace.panels, appendPanelSignature);
 }
 
@@ -12431,6 +12444,7 @@ function paneRenderSignature(workspace, visiblePanels, tree) {
   appendSignatureValue(parts, state.settings.browserSuspendInactive);
   appendSignatureValue(parts, state.settings.browserHomeUrl);
   appendSignatureValue(parts, state.settings.terminalProfile);
+  appendSignatureValue(parts, workspace.reviewPending || 0);
   appendSignatureValue(parts, paneTreeSignature(tree));
   appendSignatureArray(parts, visiblePanels, (nextParts, panel) => {
     appendSignatureValue(nextParts, panel.id);
@@ -12450,6 +12464,7 @@ function paneRenderSignature(workspace, visiblePanels, tree) {
     appendSignatureValue(nextParts, panel.filePath || '');
     appendSignatureValue(nextParts, panel.diffSource || '');
     appendSignatureValue(nextParts, panel.diffBase || '');
+    appendSignatureValue(nextParts, panel.liveAgent || "");
     appendSignatureValue(nextParts, panel.shellProfile || "");
     appendSignatureValue(nextParts, panel.shellPath || "");
     appendSignatureValue(nextParts, terminalFontSizeForPanel(panel));
@@ -12609,6 +12624,9 @@ function observePaneChromeSize(pane) {
 function updatePaneChromeState(pane, panel, workspace) {
   if (!pane || !panel) return;
   const parts = paneParts(pane);
+  const review = parts.header.querySelector(".pane-review-chip");
+  review.hidden = panel.type !== "terminal" || !panel.liveAgent || !workspace?.reviewPending;
+  if (!review.hidden) review.textContent = `${workspace.reviewPending} · ${parityText("reviewPending")}`;
   setStylePropertyIfChanged(pane, "--panel-color", panel.color || workspace?.color || "var(--color-accent)");
   const paneBackgroundImage = panel.type === "terminal" ? normalizeBackgroundValue(panel.backgroundImage) : "";
   toggleClassIfChanged(pane, "has-pane-background", Boolean(paneBackgroundImage));
@@ -13504,6 +13522,7 @@ function createPane(panel) {
       <div class="pane-grip" title="Drag pane from the header" aria-hidden="true"></div>
       <div class="pane-type" role="img"></div>
       <div class="pane-title"></div>
+      <button class="diff-review-action pane-review-chip" type="button" hidden></button>
       <div class="pane-toolbar">
         <button class="pane-tool split-right" type="button" title="Split right" aria-label="Split right"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M12 5v14"></path></svg></button>
         <button class="pane-tool split-down" type="button" title="Split down" aria-label="Split down"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M4 12h16"></path></svg></button>
@@ -13518,6 +13537,10 @@ function createPane(panel) {
     <div class="pane-body"></div>
   `;
   const parts = paneParts(pane);
+  pane.querySelector(".pane-review-chip").onclick = event => {
+    event.stopPropagation();
+    void composeDiffReview(pane.dataset.panelId);
+  };
   pane.addEventListener("pointerenter", () => {
     state.hoveredPanelId = pane.dataset.panelId;
   });
@@ -39242,6 +39265,26 @@ function contextColorPicker(activeColor, onPick) {
   };
   wrapper.append(label, input);
   return wrapper;
+}
+
+async function composeDiffReview(panelId) {
+  const endpoint = `/api/panels/${panelId}/review-comments`;
+  try {
+    const pending = (await api(endpoint)).filter(item => ["pending", "uncertain"].includes(item.delivery));
+    if (!pending.length) return;
+    const uncertain = pending.some(item => item.delivery === "uncertain");
+    const confirm = await showTextDialog({
+      title: parityText("reviewSend"),
+      message: uncertain ? parityText("reviewRetry") : parityText("reviewPreview"),
+      value: pending.map(item => `${item.path} · ${item.side} ${item.line}\n${item.context}\n${item.text}`).join("\n\n"),
+      confirmLabel: parityText("reviewSend"), multiline: true, readOnly: true
+    });
+    if (confirm === null) return;
+    const result = await api(endpoint + "/send", {
+      method: "POST", body: JSON.stringify({ ids: pending.map(item => item.id), retryUncertain: uncertain })
+    });
+    toast(parityText(result.delivery === "sent" ? "reviewSent" : result.delivery === "uncertain" ? "reviewUncertain" : "reviewError"));
+  } catch { toast(parityText("reviewError")); }
 }
 
 async function openSshWorkspace() {

@@ -10,6 +10,8 @@ const { WebSocket, WebSocketServer } = require("ws");
 const { t } = require("./i18n.cjs");
 const { browserCommands } = require("./browser-cli.cjs");
 const { agentSession, atomicJson, plainScrollback, resumeScript } = require("./session-restore.cjs");
+const { DiffComments, reviewAnchor } = require("./diff-comments.cjs");
+const { WorkspaceGit } = require("./workspace-git.cjs");
 const {TerminalDirectoryReports, directoryReportingShellArgs} = require("./terminal-directory.cjs");
 
 let pty = null;
@@ -729,6 +731,8 @@ class CmuxWindowsRuntime {
     this.staticDir = options.staticDir || path.join(__dirname, "..", "renderer");
     this.dataDir = options.dataDir || process.env.CMUX_WINDOWS_DATA_DIR || appDataRoot();
     this.sessionFile = path.join(this.dataDir, "session.json");
+    this.diffComments = new DiffComments(path.join(this.dataDir, "diff-comments.json"));
+    this.workspaceGit = new WorkspaceGit();
     this.pipeName = options.pipeName || defaultPipeName;
     this.server = null;
     this.pipeServer = null;
@@ -1098,6 +1102,7 @@ class CmuxWindowsRuntime {
       layout: workspace.layout,
       browserAutomation: workspace.browserAutomation === true,
       ssh: remote ? { destination: remote.config.destination, state: remote.state, error: remote.error } : undefined,
+      reviewPending: this.diffComments.list({ workspaceId: workspace.id }).filter(item => ["pending", "uncertain"].includes(item.delivery)).length,
       title: workspace.title,
       color: workspace.color || "",
       activePanelId: workspace.activePanelId,
@@ -1600,6 +1605,83 @@ class CmuxWindowsRuntime {
     const ownsPanel = panelId => ownsWorkspace(this.findPanel(panelId)?.workspace.id);
     const notFound = () => writeJSON(response, 404, { error: "not_found" });
     try {
+      const review = url.pathname.match(/^\/api\/panels\/([^/]+)\/review-comments(?:\/([^/]+))?$/);
+      if (review) {
+        const [, panelId, commentId] = review;
+        const found = this.findPanel(panelId);
+        if (!found || !ownsPanel(panelId) || found.workspace.remote) return notFound();
+        const { panel, workspace } = found;
+        const current = () => this.findPanel(panelId)?.workspace === workspace && ownsPanel(panelId);
+        const scope = { workspaceId: workspace.id };
+        if (panel.type === "terminal") {
+          if (request.method === "GET" && !commentId) {
+            writeJSON(response, 200, this.diffComments.list(scope).filter(comment => comment.delivery !== "sent"));
+            return;
+          }
+          if (request.method === "POST" && commentId === "send") {
+            const body = await readBody(request);
+            if (!current()) return notFound();
+            const terminal = this.terminals.get(panelId);
+            if (!terminal || terminal.closed || !terminal.liveAgent || terminal.remote || !terminal.ptyProcess) {
+              writeJSON(response, 409, { error: "Select a live Codex or Claude Code terminal with cmux hooks enabled" });
+              return;
+            }
+            if (!Array.isArray(body.ids) || !body.ids.length || !body.ids.every(id => typeof id === "string")) {
+              writeJSON(response, 400, { error: "Select at least one review comment" });
+              return;
+            }
+            const claim = this.diffComments.claim(scope, { ids: body.ids, retryUncertain: body.retryUncertain === true });
+            if (!claim) {
+              writeJSON(response, 409, { error: "Review comments changed before sending" });
+              return;
+            }
+            let delivery = "uncertain";
+            try {
+              delivery = terminal.write(`\x1b[200~${claim.prompt}\x1b[201~\r`) ? "sent" : "pending";
+              if (delivery === "sent") {
+                await new Promise(resolve => setTimeout(resolve, 100));
+                if (terminal.closed) delivery = "uncertain";
+              }
+            } finally {
+              this.diffComments.finish(claim, delivery);
+              this.broadcastState();
+            }
+            writeJSON(response, 200, { delivery });
+            return;
+          }
+          return notFound();
+        }
+        if (panel.type !== "diff") return notFound();
+        const cwd = panel.cwd;
+        scope.root = await this.workspaceGit.root(cwd);
+        if (!current() || panel.cwd !== cwd) return notFound();
+        if (request.method === "GET" && !commentId) {
+          writeJSON(response, 200, this.diffComments.list(scope));
+          return;
+        }
+        if (request.method === "POST" && !commentId) {
+          const body = await readBody(request);
+          const source = panel.diffSource || "unstaged";
+          const base = panel.diffBase || "";
+          const patch = await this.workspaceGit.diff(cwd, body.path, { source, base });
+          const anchor = reviewAnchor(patch, { source, side: body.side, line: body.line });
+          if (!current() || panel.cwd !== cwd || (panel.diffSource || "unstaged") !== source || (panel.diffBase || "") !== base) return notFound();
+          if (!anchor || anchor.context !== body.context || scope.root !== patch.root) {
+            writeJSON(response, 409, { error: "This line has changed. Refresh the diff and try again." });
+            return;
+          }
+          this.diffComments.add(scope, { ...anchor, text: body.text });
+        } else if (request.method === "PATCH" && commentId) {
+          const body = await readBody(request);
+          if (!current() || panel.cwd !== cwd) return notFound();
+          this.diffComments.edit(scope, commentId, body.text);
+        } else if (request.method === "DELETE" && commentId) {
+          this.diffComments.remove(scope, commentId);
+        } else return notFound();
+        this.broadcastState();
+        writeJSON(response, 200, this.diffComments.list(scope));
+        return;
+      }
       if (request.method === "GET" && url.pathname === "/api/state") {
         writeJSON(response, 200, this.serializedState(windowId));
         return;

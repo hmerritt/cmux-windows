@@ -3,7 +3,7 @@ import {parseDiffLines,splitDiffRows} from './diff-lines.mjs';
 import {wordDiffRows} from './diff-words.mjs';
 
 function element(tag,className,text){const node=document.createElement(tag);node.className=className;if(text!==undefined)node.textContent=text;return node;}
-export function createDiffPanes({onSourceChange}={}) {
+export function createDiffPanes({onSourceChange, reviewRequest, promptComment}={}) {
   const sessions=new Map();
   let preferences={layout:'unified',wordWrap:false,lineNumbers:true,showBackgrounds:true,wordDiffs:false,expandUnchanged:false,diffIndicators:'bars'},savingPreferences=false;
   function applyPreferences(updates) {
@@ -82,12 +82,65 @@ export function createDiffPanes({onSourceChange}={}) {
     updateViewed(session);
     if(focusedPath)[...session.list.children].find(row=>row.dataset.gitPath===focusedPath)?.focus();
   }
+  const reviewButton=(key,action)=>{
+    const button=element('button','diff-review-action',parityText(key));
+    button.type='button';
+    button.onclick=action;
+    return button;
+  };
+  async function updateReview(session, comment, anchor) {
+    const text=await promptComment({comment,anchor});
+    if(!text || session.disposed)return;
+    const target=comment ? `/${comment.id}` : '';
+    await changeReview(session,target,{method:comment?'PATCH':'POST',body:JSON.stringify({...anchor,text})});
+  }
+  async function changeReview(session,target,options) {
+    try {
+      session.comments=await reviewRequest(session.panel.id,target,options);
+      if(session.disposed)return;
+      session.reviewNotice.hidden=true;
+      renderReview(session);
+    }catch{
+      session.reviewNotice.hidden=false;
+      session.reviewNotice.textContent=parityText('reviewError');
+    }
+  }
+  function renderReview(session) {
+    if(session.current)renderPatch(session,session.current);
+    else renderOutdated(session,new Set());
+  }
+  function commentCard(session,comment,unanchored=false) {
+    const card=element('div','diff-review-comment');
+    if(unanchored)card.append(element('strong','',`${parityText('reviewUnanchored')} · ${comment.path} · ${comment.line}`));
+    card.append(element('p','',comment.text));
+    if(comment.delivery==='uncertain')card.append(element('small','',parityText('reviewUncertain')));
+    if(comment.delivery!=='sending')card.append(
+      reviewButton('reviewEdit',()=>updateReview(session,comment)),
+      reviewButton('reviewDelete',()=>changeReview(session,`/${comment.id}`,{method:'DELETE'}))
+    );
+    return card;
+  }
+  function renderOutdated(session,anchored) {
+    const available=new Set(session.entries.map(entry=>entry.path));
+    const outdated=session.comments.filter(comment=>comment.source===session.options.source &&
+      (!available.has(comment.path) || (comment.path===session.selected && !anchored.has(comment.id))));
+    session.outdated.replaceChildren(...outdated.map(comment=>commentCard(session,comment,true)));
+    session.outdated.hidden=!outdated.length;
+  }
   function renderPatch(session,result) {
     const scrollTop=session.patch.scrollTop;
     const previousHunk=session.renderedRevision===result.revision?session.hunk:-1;
     session.patch.replaceChildren();session.hunk=-1;session.renderedLayout=preferences.layout;session.renderedWordDiffs=preferences.wordDiffs;session.renderedRevision=result.revision;
     session.contextNotice.hidden=!result.contextLimited;
     const wordBudget={remaining:2000000};
+    const anchored=new Set();
+    const commentsByLine=new Map();
+    for(const comment of session.comments) {
+      if(comment.path!==result.path || comment.source!==result.source)continue;
+      const key=`${comment.side}:${comment.line}`;
+      if(!commentsByLine.has(key))commentsByLine.set(key,[]);
+      commentsByLine.get(key).push(comment);
+    }
     if(result.binary)session.patch.append(element('p','',parityText('binaryDiff')));
     if(result.limited)session.patch.append(element('p','',parityText('previewLimit')));
     for(const [label,text] of [['stagedChanges',result.staged],['workingChanges',result.unstaged],['diffBranchChanges',result.branch]]) {
@@ -109,7 +162,24 @@ export function createDiffPanes({onSourceChange}={}) {
             const sign=element('span','diff-sign',row.text[0]);sign.setAttribute('aria-hidden','true');text.append(sign);
             for(const part of wordSegments.get(row)||[{text:row.text.slice(1),changed:false}])text.append(element('span',part.changed?'diff-word-change':'',part.text));
           }else text.textContent=' ';
-          if(row?.note)text.append(element('span','diff-line-note','\n'+row.note));return text;
+          if(row?.note)text.append(element('span','diff-line-note','\n'+row.note));
+          if(!reviewRequest || !row || !['added','removed'].includes(row.kind))return text;
+          const side=row.kind==='added'?'new':'old';
+          const anchor={path:result.path,side,line:row[side+'Line'],context:row.text};
+          const cell=element('div','diff-review-line');
+          cell.append(text);
+          const add=reviewButton('reviewAdd',()=>updateReview(session,null,anchor));
+          add.classList.add('diff-review-add');
+          add.title=parityText('reviewAdd');
+          add.setAttribute('aria-label',`${add.title} · ${side} ${anchor.line}`);
+          add.textContent='+';
+          cell.append(add);
+          for(const comment of commentsByLine.get(`${side}:${anchor.line}`)||[]) {
+            if(comment.context!==row.text)continue;
+            anchored.add(comment.id);
+            cell.append(commentCard(session,comment));
+          }
+          return cell;
         };
         if(preferences.layout==='split') {
           for(const pair of splitDiffRows(block.rows)) {
@@ -127,6 +197,7 @@ export function createDiffPanes({onSourceChange}={}) {
     }
     const hunks=[...session.patch.querySelectorAll('.diff-hunk')];
     if(previousHunk>=0 && hunks.length){session.hunk=Math.min(previousHunk,hunks.length-1);hunks[session.hunk].classList.add('is-current');}
+    renderOutdated(session,anchored);
     session.patch.scrollTop=scrollTop;
   }
   async function selectFile(session,filePath) {
@@ -152,11 +223,21 @@ export function createDiffPanes({onSourceChange}={}) {
       if(!result?.ok){session.entries=[];session.selected=null;session.current=null;session.revision=null;session.request++;renderFiles(session);session.baseStatus.textContent='';session.patch.replaceChildren(element('p','',errorText(result?.error)));return;}
       session.baseStatus.textContent=result.baseRef?`${parityText('diffBase')}: ${result.baseRef}`:'';
       session.root=result.root;session.entries=result.entries;session.notice.hidden=!result.truncated;
+      let reviewChanged=false;
+      if(reviewRequest) {
+        try {
+          const comments=await reviewRequest(session.panel.id);
+          if(session.disposed || generation!==session.generation)return;
+          reviewChanged=JSON.stringify(comments)!==JSON.stringify(session.comments);
+          session.comments=comments;
+        }catch{}
+      }
       if(!session.viewedLoaded){try{const viewed=JSON.parse(localStorage.getItem(viewedKey(session))||'{}');if(viewed && typeof viewed==='object' && !Array.isArray(viewed))session.viewed=viewed;}catch{}session.viewedLoaded=true;}
       const selected=result.entries.find(entry=>entry.path===session.selected)?.path || result.entries[0]?.path;
       renderFiles(session);
       if(selected)await selectFile(session,selected);
       else {session.request++;session.selected=null;session.revision=null;session.current=null;session.patch.replaceChildren(element('p','',parityText('noChanges')));}
+      if(reviewChanged || !selected)renderReview(session);
     }catch{if(!session.disposed && generation===session.generation)session.patch.replaceChildren(element('p','',parityText('gitError')));}
     finally{if(generation===session.generation)session.loading=false;}
   }
@@ -188,10 +269,12 @@ export function createDiffPanes({onSourceChange}={}) {
         const contextNotice=element('p','diff-notice',parityText('diffContextLimit'));contextNotice.setAttribute('role','status');contextNotice.hidden=true;
         const preferenceNotice=element('p','diff-notice');preferenceNotice.setAttribute('role','status');preferenceNotice.hidden=true;
         const notice=element('p','diff-notice',parityText('truncated'));notice.hidden=true;
+        const reviewNotice=element('p','diff-notice');reviewNotice.hidden=true;reviewNotice.setAttribute('role','status');
+        const outdated=element('div','diff-review-outdated');outdated.hidden=true;
         const split=element('div','diff-layout');
         const list=element('div','diff-file-list');list.setAttribute('role','listbox');list.setAttribute('aria-label',parityText('changedFiles'));
         const patch=element('div','diff-patch');patch.tabIndex=0;patch.setAttribute('role','region');patch.setAttribute('aria-label',parityText('diffPane'));
-        session={panel,host,toolbar,source,base,applyBase,baseStatus,options:null,generation:0,indicators,contextNotice,preferenceNotice,search,list,patch,notice,entries:[],selected:null,request:0,revision:null,current:null,revisions:new Map(),viewed:{},viewedLoaded:false,hunk:-1,disposed:false,loading:false};
+        session={panel,host,toolbar,source,base,applyBase,baseStatus,options:null,generation:0,indicators,contextNotice,preferenceNotice,search,list,patch,notice,reviewNotice,outdated,comments:[],entries:[],selected:null,request:0,revision:null,current:null,revisions:new Map(),viewed:{},viewedLoaded:false,hunk:-1,disposed:false,loading:false};
         syncSource(session,panel);
         source.onchange=()=>changeSource(session,{diffSource:source.value});
         applyBase.onclick=()=>changeSource(session,{diffBase:base.value.trim()});
@@ -199,7 +282,7 @@ export function createDiffPanes({onSourceChange}={}) {
         search.oninput=()=>renderFiles(session);
         search.onkeydown=event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();search.value='';renderFiles(session);host.focus();}};
         reload.onclick=()=>refresh(session);
-        toolbar.prepend(source,base,applyBase,baseStatus,search,reload);split.append(list,patch);host.append(toolbar,notice,preferenceNotice,contextNotice,split);
+        toolbar.prepend(source,base,applyBase,baseStatus,search,reload);split.append(list,patch);host.append(toolbar,notice,preferenceNotice,contextNotice,reviewNotice,outdated,split);
         sessions.set(panel.id,session);applyPreferences({});session.timer=setInterval(()=>refresh(session),3000);
       }
       if(syncSource(session,panel))requestAnimationFrame(()=>refresh(session));

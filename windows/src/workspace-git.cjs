@@ -31,10 +31,13 @@ class WorkspaceGit {
     }
     throw Error('base_required');
   }
-  async status(directory,options={}) {
+  async root(directory) {
     if(typeof directory!=='string')throw Error('git_error');
     const base=await fs.realpath(directory);
-    const root=await fs.realpath((await this.git(base,['rev-parse','--show-toplevel'])).replace(/\r?\n$/,''));
+    return fs.realpath((await this.git(base,['rev-parse','--show-toplevel'])).replace(/\r?\n$/,''));
+  }
+  async status(directory,options={}) {
+    const root=await this.root(directory);
     const source=options?.source || 'combined';
     if(!['combined','staged','unstaged','branch'].includes(source))throw Error('invalid_source');
     if(source==='branch') {
